@@ -31,6 +31,9 @@ RUN pnpm ui:build
 
 ENV NODE_ENV=production
 
+# BigQuery MCP server URL
+ENV BIGQUERY_MCP_URL=http://ck8c84oo40gkcwwk4gcokco0.5.161.117.36.sslip.io
+
 # Allow non-root user to write temp files during runtime/tests.
 RUN chown -R node:node /app
 
