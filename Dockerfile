@@ -43,9 +43,9 @@ ENV BIGQUERY_MCP_URL=http://ck8c84oo40gkcwwk4gcokco0.5.161.117.36.sslip.io
 # Allow non-root user to write temp files during runtime/tests.
 RUN chown -R node:node /app
 
-# Create OpenClaw config directory with HTTP endpoints and auto-approve exec tools
+# Create OpenClaw config directory with HTTP endpoints and tool permissions
 RUN mkdir -p /home/node/.openclaw && \
-    echo '{"gateway":{"http":{"endpoints":{"chatCompletions":{"enabled":true},"responses":{"enabled":true}}},"allowExec":true},"agent":{"autoApproveTools":["exec","read","write"]}}' > /home/node/.openclaw/openclaw.json && \
+    echo '{"gateway":{"http":{"endpoints":{"chatCompletions":{"enabled":true},"responses":{"enabled":true}}}},"tools":{"exec":{"enabled":true,"autoApprove":true}}}' > /home/node/.openclaw/openclaw.json && \
     chown -R node:node /home/node/.openclaw
 
 # Security hardening: Run as non-root user
