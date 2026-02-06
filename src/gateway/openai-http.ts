@@ -5,6 +5,15 @@ import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommand } from "../commands/agent.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
 import { defaultRuntime } from "../runtime.js";
+import {
+  extractTenantFromRequest,
+  validateTenant,
+  getAllScopeKeys,
+  tenantToString,
+  buildTenantSystemContext,
+  hasTenantHeaders,
+  type TenantContext,
+} from "../tenant/index.js";
 import { authorizeGatewayConnect, type ResolvedGatewayAuth } from "./auth.js";
 import {
   readJsonBodyOrError,
@@ -39,11 +48,7 @@ type OpenAiChatCompletionRequest = {
   source?: unknown;
 };
 
-type TenantContext = {
-  workspaceId?: string;
-  orgId?: string;
-  source?: string; // whatsapp | dashboard | workspace
-};
+// TenantContext is now imported from ../tenant/index.js
 
 function writeSse(res: ServerResponse, data: unknown) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -215,9 +220,27 @@ export async function handleOpenAiHttpRequest(
   const model = typeof payload.model === "string" ? payload.model : "openclaw";
   const user = typeof payload.user === "string" ? payload.user : undefined;
 
+  // Extract tenant context from headers and body
+  const tenant = extractTenantFromRequest(req.headers, body as Record<string, unknown>);
+  const tenantValidation = validateTenant(tenant);
+  const hasTenant = hasTenantHeaders(req.headers);
+
+  // Log tenant info if present
+  if (hasTenant) {
+    console.log(`[openai-http] Tenant: ${tenantToString(tenant)}`);
+    console.log(`[openai-http] Scopes: ${getAllScopeKeys(tenant).join(", ")}`);
+  }
+
   const agentId = resolveAgentIdForRequest({ req, model });
   const sessionKey = resolveOpenAiSessionKey({ req, agentId, user });
   const prompt = buildAgentPrompt(payload.messages);
+
+  // Add tenant context to system prompt if tenant is valid
+  let extraSystemPrompt = prompt.extraSystemPrompt || "";
+  if (hasTenant && tenantValidation.ok) {
+    const tenantContext = buildTenantSystemContext(tenant);
+    extraSystemPrompt = tenantContext + (extraSystemPrompt ? "\n\n" + extraSystemPrompt : "");
+  }
   if (!prompt.message) {
     sendJson(res, 400, {
       error: {
@@ -236,7 +259,7 @@ export async function handleOpenAiHttpRequest(
       const result = await agentCommand(
         {
           message: prompt.message,
-          extraSystemPrompt: prompt.extraSystemPrompt,
+          extraSystemPrompt,
           sessionKey,
           runId,
           deliver: false,
@@ -349,7 +372,7 @@ export async function handleOpenAiHttpRequest(
       const result = await agentCommand(
         {
           message: prompt.message,
-          extraSystemPrompt: prompt.extraSystemPrompt,
+          extraSystemPrompt,
           sessionKey,
           runId,
           deliver: false,
