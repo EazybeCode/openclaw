@@ -45,7 +45,7 @@ RUN chown -R node:node /app
 
 # Create OpenClaw config directory with HTTP endpoints and exec permissions
 RUN mkdir -p /home/node/.openclaw && \
-    echo '{"gateway":{"http":{"endpoints":{"chatCompletions":{"enabled":true},"responses":{"enabled":true}}}},"tools":{"exec":{"security":"full","ask":"off"}}}' > /home/node/.openclaw/openclaw.json && \
+    echo '{"gateway":{"http":{"endpoints":{"chatCompletions":{"enabled":true},"responses":{"enabled":true}}}},"tools":{"exec":{"host":"gateway","security":"full","ask":"off"}}}' > /home/node/.openclaw/openclaw.json && \
     chown -R node:node /home/node/.openclaw
 
 # Security hardening: Run as non-root user
