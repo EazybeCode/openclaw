@@ -33,6 +33,16 @@ type OpenAiChatCompletionRequest = {
   stream?: unknown;
   messages?: unknown;
   user?: unknown;
+  // Multi-tenant fields
+  workspace_id?: unknown;
+  org_id?: unknown;
+  source?: unknown;
+};
+
+type TenantContext = {
+  workspaceId?: string;
+  orgId?: string;
+  source?: string; // whatsapp | dashboard | workspace
 };
 
 function writeSse(res: ServerResponse, data: unknown) {
