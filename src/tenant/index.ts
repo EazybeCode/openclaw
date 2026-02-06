@@ -189,6 +189,18 @@ export function buildTenantSystemContext(tenant: TenantContext): string {
 
   context += `\nYou are assisting this specific user within their organization context.\n`;
 
+  // Add available data sources for analytics
+  context += `\n## Available Data Sources\n`;
+  context += `You have access to WhatsApp Analytics data via the bigquery-mcp skill.\n`;
+  context += `\n### Tables in whatsapp_analytics dataset:\n`;
+  context += `- **daily_performance_summary**: Daily agent metrics (activity_date, user_id, avg_agent_response_time_seconds, time_to_first_response_seconds, agent_message_count, contact_message_count)\n`;
+  context += `- **conversation_summary**: Per-chat metrics (average_response_time, first_response_time, analytics.messages_sent, analytics.messages_received)\n`;
+  context += `\n### When to use BigQuery:\n`;
+  context += `- Questions about response times, performance metrics, message counts\n`;
+  context += `- Agent/rep performance comparisons and rankings\n`;
+  context += `- Daily/weekly analytics trends\n`;
+  context += `\nUse the bigquery-mcp skill with execute_sql to query this data.\n`;
+
   return context;
 }
 
