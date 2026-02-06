@@ -4,6 +4,7 @@ import { buildHistoryContextFromEntries, type HistoryEntry } from "../auto-reply
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommand } from "../commands/agent.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
+import { buildMemoryContext } from "../memory/mem0-client.js";
 import { defaultRuntime } from "../runtime.js";
 import {
   extractTenantFromRequest,
@@ -235,11 +236,22 @@ export async function handleOpenAiHttpRequest(
   const sessionKey = resolveOpenAiSessionKey({ req, agentId, user });
   const prompt = buildAgentPrompt(payload.messages);
 
-  // Add tenant context to system prompt if tenant is valid
+  // Add tenant context and memories to system prompt if tenant is valid
   let extraSystemPrompt = prompt.extraSystemPrompt || "";
   if (hasTenant && tenantValidation.ok) {
     const tenantContext = buildTenantSystemContext(tenant);
     extraSystemPrompt = tenantContext + (extraSystemPrompt ? "\n\n" + extraSystemPrompt : "");
+
+    // Retrieve relevant memories from Mem0
+    try {
+      const memoryContext = await buildMemoryContext(prompt.message, tenant, 5);
+      if (memoryContext) {
+        extraSystemPrompt = extraSystemPrompt + "\n\n" + memoryContext;
+        console.log(`[openai-http] Mem0: Retrieved memories for ${tenantToString(tenant)}`);
+      }
+    } catch (err) {
+      console.warn(`[openai-http] Mem0 error:`, err);
+    }
   }
   if (!prompt.message) {
     sendJson(res, 400, {
