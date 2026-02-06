@@ -4,7 +4,7 @@ import { buildHistoryContextFromEntries, type HistoryEntry } from "../auto-reply
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommand } from "../commands/agent.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
-import { buildMemoryContext } from "../memory/mem0-client.js";
+import { buildMemoryContext, storeMemory } from "../memory/mem0-client.js";
 import { defaultRuntime } from "../runtime.js";
 import {
   extractTenantFromRequest,
@@ -290,6 +290,19 @@ export async function handleOpenAiHttpRequest(
               .filter(Boolean)
               .join("\n\n")
           : "No response from OpenClaw.";
+
+      // Store conversation to Mem0 - it automatically extracts relevant memories
+      if (hasTenant && tenantValidation.ok) {
+        storeMemory(prompt.message, tenant, "user")
+          .then((stored) => {
+            if (stored) {
+              console.log(`[openai-http] Mem0: Stored memory for ${tenantToString(tenant)}`);
+            }
+          })
+          .catch((err) => {
+            console.warn(`[openai-http] Mem0 store error:`, err);
+          });
+      }
 
       sendJson(res, 200, {
         id: runId,
