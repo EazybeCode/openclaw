@@ -206,6 +206,27 @@ export function buildTenantSystemContext(tenant: TenantContext): string {
   context += `- Agent/rep performance comparisons and rankings\n`;
   context += `- Daily/weekly analytics trends\n`;
 
+  // Add HubSpot CRM data source
+  context += `\n## Available Data Sources - HubSpot CRM\n`;
+  context += `\n### How to Query HubSpot:\n`;
+  context += `Run: python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" <command>\n`;
+  context += `\n### Available Commands:\n`;
+  context += `- **list-tools**: List all available HubSpot tools\n`;
+  context += `- **call <tool_name> --args '{"key":"value"}'**: Call a specific tool\n`;
+  context += `\n### Common HubSpot Tools:\n`;
+  context += `- hubspot_search_contacts: Search for contacts\n`;
+  context += `- hubspot_search_deals: Search for deals/opportunities\n`;
+  context += `- hubspot_search_companies: Search for companies\n`;
+  context += `- hubspot_get_contact: Get contact by ID\n`;
+  context += `- hubspot_get_deal: Get deal by ID\n`;
+  context += `\n### Example Commands:\n`;
+  context += `- List tools: python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" list-tools\n`;
+  context += `- Search contacts: python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" call hubspot_search_contacts --args '{"query":"email:*@example.com"}'\n`;
+  context += `\n### When to use HubSpot:\n`;
+  context += `- Questions about contacts, leads, customers\n`;
+  context += `- Deal/opportunity information and pipeline status\n`;
+  context += `- Company and account data\n`;
+
   return context;
 }
 

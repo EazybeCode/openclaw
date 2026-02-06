@@ -8,11 +8,14 @@ RUN corepack enable
 
 WORKDIR /app
 
-# Install Python3 for BigQuery MCP skill
+# Install Python3 and pip for MCP skills (BigQuery, HubSpot)
 RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-pip && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+# Install pymongo for HubSpot MCP skill (MongoDB token lookup)
+RUN pip3 install --no-cache-dir --break-system-packages pymongo
 
 ARG OPENCLAW_DOCKER_APT_PACKAGES=""
 RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
@@ -39,6 +42,9 @@ ENV NODE_ENV=production
 
 # BigQuery MCP server URL
 ENV BIGQUERY_MCP_URL=http://ck8c84oo40gkcwwk4gcokco0.5.161.117.36.sslip.io
+
+# HubSpot MCP access token (set in Coolify env vars per-user/org)
+ENV HUBSPOT_ACCESS_TOKEN=""
 
 # Allow non-root user to write temp files during runtime/tests.
 RUN chown -R node:node /app
