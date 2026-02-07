@@ -317,7 +317,7 @@ export async function handleOpenAiHttpRequest(
         if (qdrantResults) {
           extraSystemPrompt =
             extraSystemPrompt +
-            `\n\n## Knowledge Base Search Results\n\nThe following information was found in the knowledge base. Use this to answer the user's question:\n\n${qdrantResults}`;
+            `\n\n## Knowledge Base Search Results\n\nThe following are REAL conversations and documentation from Eazybe. Extract relevant information to answer the user's question. These are authoritative sources - use them confidently:\n\n${qdrantResults}\n\n---\nBased on the above search results, synthesize a helpful answer. Do NOT say you couldn't find information if the results contain relevant data.`;
           console.log(`[openai-http] Qdrant: Found ${qdrantResults.length} chars of results`);
         } else {
           console.log(`[openai-http] Qdrant: No results found`);
