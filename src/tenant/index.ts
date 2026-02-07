@@ -186,37 +186,33 @@ export function buildTenantSystemContext(tenant: TenantContext): string {
 - Surface: ${tenant.surface}
 ${tenant.customerId ? `- Customer: ${tenant.customerId}\n` : ""}
 
-## Available Tools (Native MCP)
+## Available Tools
 
-You have access to the following MCP tools. Use them to answer questions:
+### Native MCP Tools (use directly)
 
-### qdrant_qdrant-find
-Search the knowledge base for information about Eazybe, products, features, help docs, and past conversations.
-- Use for: "What is Eazybe?", product features, how-to questions, documentation
+**qdrant_qdrant-find** - Search knowledge base
+- Use for: product info, features, help docs, past conversations
+- Example: Search for "what is eazybe" or "how to use extension"
 
-### bigquery_execute_sql
-Query WhatsApp analytics data. **ALWAYS filter by org_id = '${tenant.organizationId}'**
-- Table: \`waba-454907.whatsapp_analytics.daily_performance_summary\`
+**bigquery_execute_sql** - Query WhatsApp analytics
+- Table: waba-454907.whatsapp_analytics.daily_performance_summary
 - Columns: user_id, org_id, activity_date, agent_message_count, contact_message_count, avg_agent_response_time_seconds
-- Use for: Performance metrics, response times, message counts, comparisons
+- **ALWAYS filter by org_id='${tenant.organizationId}'**
 
-### Team API (via exec tool)
-Map names to user_ids for BigQuery queries. Run:
+### Exec Tools (use exec command)
+
+**Team API** - Map names to user_ids:
 \`exec python3 /app/skills/eazybe-team/scripts/team.py --org-id "${tenant.workspaceId}" find "name"\`
-- Use FIRST when comparing people by name (BigQuery uses numeric user_ids)
 
-### HubSpot (via exec tool)
-Query CRM data. Run:
-\`exec python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" call <tool> --args '{...}'\`
-- Tools: search_crm_objects, search_owners, get_crm_objects
+**HubSpot** - Query CRM data:
+\`exec python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" call search_crm_objects --args '{"objectType":"DEAL"}'\`
 
 ## Critical Rules
 
-1. **NEVER make up information** - always use tools to find answers
-2. **BigQuery**: ALWAYS include \`WHERE org_id='${tenant.organizationId}'\`
+1. **NEVER make up information** - always use tools
+2. **BigQuery**: ALWAYS include WHERE org_id='${tenant.organizationId}'
 3. **Comparisons**: First get user_ids from Team API, then query BigQuery
-4. **Knowledge questions**: Search qdrant_qdrant-find first
-5. **Be specific**: Include actual numbers, create tables for comparisons
+4. **Be specific**: Include numbers, create tables for comparisons
 `;
 
   return context;

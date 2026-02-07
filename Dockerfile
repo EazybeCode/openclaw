@@ -58,6 +58,13 @@ ENV HUBSPOT_ACCESS_TOKEN=""
 # Allow non-root user to write temp files during runtime/tests.
 RUN chown -R node:node /app
 
+# Install mcp-adapter plugin from GitHub
+RUN git clone https://github.com/androidStern-personal/openclaw-mcp-adapter.git /tmp/mcp-adapter && \
+    cd /tmp/mcp-adapter && npm install && \
+    mkdir -p /home/node/.openclaw/plugins/mcp-adapter && \
+    cp -r /tmp/mcp-adapter/* /home/node/.openclaw/plugins/mcp-adapter/ && \
+    rm -rf /tmp/mcp-adapter
+
 # Create OpenClaw config directory with MCP adapter plugin configuration
 RUN mkdir -p /home/node/.openclaw && \
     cat > /home/node/.openclaw/openclaw.json << 'CONFIGEOF'
@@ -71,17 +78,13 @@ RUN mkdir -p /home/node/.openclaw && \
     }
   },
   "tools": {
-    "exec": { "host": "gateway", "security": "full", "ask": "off" },
-    "sandbox": {
-      "tools": {
-        "allow": ["group:runtime", "group:fs", "mcp-adapter", "exec"]
-      }
-    }
+    "exec": { "host": "gateway", "security": "full", "ask": "off" }
   },
   "plugins": {
     "entries": {
       "mcp-adapter": {
         "enabled": true,
+        "path": "/home/node/.openclaw/plugins/mcp-adapter",
         "config": {
           "toolPrefix": true,
           "servers": [
@@ -103,9 +106,6 @@ RUN mkdir -p /home/node/.openclaw && \
 }
 CONFIGEOF
 RUN chown -R node:node /home/node/.openclaw
-
-# Install mcp-adapter plugin
-RUN node dist/index.js plugins install mcp-adapter || echo "Plugin install skipped (may already exist)"
 
 # Security hardening: Run as non-root user
 # The node:22-bookworm image includes a 'node' user (uid 1000)
