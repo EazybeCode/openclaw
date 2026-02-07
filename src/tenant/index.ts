@@ -264,25 +264,24 @@ python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizati
 Use the exec tool to run: python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "YOUR_SQL_QUERY"
 
 **Table:** waba-454907.whatsapp_analytics.daily_performance_summary
-**Columns:** user_id, org_id, workspace_id, activity_date, agent_message_count, contact_message_count, avg_agent_response_time_seconds, time_to_first_response_seconds
+**Columns:** user_id, org_id, activity_date, contact_id, agent_message_count, contact_message_count, avg_agent_response_time_seconds, time_to_first_response_seconds
 
-⚠️ **CRITICAL: ALWAYS filter by org_id AND workspace_id!** The table contains data from ALL organizations.
+⚠️ **CRITICAL: ALWAYS filter by org_id!** The table contains data from ALL organizations.
 - org_id = '${tenant.organizationId}' (from x-org-id header)
-- workspace_id = '${tenant.workspaceId}' (from x-workspace-id header)
 
-**Example Queries (ALWAYS include WHERE clause with org_id and workspace_id):**
+**Example Queries (ALWAYS include WHERE clause with org_id):**
 \`\`\`
 # Get performance metrics for a specific user
-python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT user_id, AVG(avg_agent_response_time_seconds) as avg_response_time, SUM(agent_message_count) as total_messages FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' AND workspace_id='${tenant.workspaceId}' AND user_id='USER_ID_HERE' GROUP BY user_id"
+python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT user_id, AVG(avg_agent_response_time_seconds) as avg_response_time, SUM(agent_message_count) as total_messages FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' AND user_id='USER_ID_HERE' GROUP BY user_id"
 
 # Compare two users
-python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT user_id, AVG(avg_agent_response_time_seconds) as avg_response_time, SUM(agent_message_count) as total_messages FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' AND workspace_id='${tenant.workspaceId}' AND user_id IN ('USER1', 'USER2') GROUP BY user_id"
+python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT user_id, AVG(avg_agent_response_time_seconds) as avg_response_time, SUM(agent_message_count) as total_messages FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' AND user_id IN ('USER1', 'USER2') GROUP BY user_id"
 
 # Get all team performance
-python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT user_id, SUM(agent_message_count) as messages, AVG(avg_agent_response_time_seconds) as avg_response FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' AND workspace_id='${tenant.workspaceId}' GROUP BY user_id ORDER BY messages DESC"
+python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT user_id, SUM(agent_message_count) as messages, AVG(avg_agent_response_time_seconds) as avg_response FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' GROUP BY user_id ORDER BY messages DESC"
 \`\`\`
 
-**NEVER run queries without org_id and workspace_id filters!**
+**NEVER run queries without org_id filter!**
 
 ### 3. Qdrant Knowledge Base (Semantic Search)
 Use the exec tool to run: python3 /app/skills/qdrant-mcp/scripts/qdrant.py <command>
@@ -320,9 +319,9 @@ When user asks to "Compare X and Y" (like "Compare mohit and chandan"):
    \`\`\`
    This returns their user_id which you need for BigQuery!
 
-2. **THEN**: Query BigQuery with their user_ids (ALWAYS include org_id AND workspace_id):
+2. **THEN**: Query BigQuery with their user_ids (ALWAYS include org_id):
    \`\`\`
-   python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT user_id, AVG(avg_agent_response_time_seconds) as avg_response_time, SUM(agent_message_count) as total_messages FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' AND workspace_id='${tenant.workspaceId}' AND user_id IN ('USER_ID_1', 'USER_ID_2') GROUP BY user_id"
+   python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT user_id, AVG(avg_agent_response_time_seconds) as avg_response_time, SUM(agent_message_count) as total_messages FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' AND user_id IN ('USER_ID_1', 'USER_ID_2') GROUP BY user_id"
    \`\`\`
 
 3. **ALSO**: Query HubSpot for their deals (optional):
