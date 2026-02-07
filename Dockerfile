@@ -58,54 +58,13 @@ ENV HUBSPOT_ACCESS_TOKEN=""
 # Allow non-root user to write temp files during runtime/tests.
 RUN chown -R node:node /app
 
-# Install mcp-adapter plugin from GitHub
-RUN git clone https://github.com/androidStern-personal/openclaw-mcp-adapter.git /tmp/mcp-adapter && \
-    cd /tmp/mcp-adapter && npm install && \
-    mkdir -p /home/node/.openclaw/plugins/mcp-adapter && \
-    cp -r /tmp/mcp-adapter/* /home/node/.openclaw/plugins/mcp-adapter/ && \
-    rm -rf /tmp/mcp-adapter
-
-# Create OpenClaw config directory with MCP adapter plugin configuration
+# Create OpenClaw config directory with HTTP endpoints and exec permissions
 RUN mkdir -p /home/node/.openclaw && \
-    cat > /home/node/.openclaw/openclaw.json << 'CONFIGEOF'
-{
-  "gateway": {
-    "http": {
-      "endpoints": {
-        "chatCompletions": { "enabled": true },
-        "responses": { "enabled": true }
-      }
-    }
-  },
-  "tools": {
-    "exec": { "host": "gateway", "security": "full", "ask": "off" }
-  },
-  "plugins": {
-    "entries": {
-      "mcp-adapter": {
-        "enabled": true,
-        "path": "/home/node/.openclaw/plugins/mcp-adapter",
-        "config": {
-          "toolPrefix": true,
-          "servers": [
-            {
-              "name": "qdrant",
-              "transport": "http",
-              "url": "http://gw80os8k0kcgc488o0gw0so8.5.161.117.36.sslip.io/sse"
-            },
-            {
-              "name": "bigquery",
-              "transport": "http",
-              "url": "http://ck8c84oo40gkcwwk4gcokco0.5.161.117.36.sslip.io/mcp"
-            }
-          ]
-        }
-      }
-    }
-  }
-}
-CONFIGEOF
-RUN chown -R node:node /home/node/.openclaw
+    echo '{"gateway":{"http":{"endpoints":{"chatCompletions":{"enabled":true},"responses":{"enabled":true}}}},"tools":{"exec":{"host":"gateway","security":"full","ask":"off"}}}' > /home/node/.openclaw/openclaw.json && \
+    chown -R node:node /home/node/.openclaw
+
+# Install mcp-adapter plugin via openclaw CLI
+RUN node dist/index.js plugins install mcp-adapter || echo "mcp-adapter plugin not available in registry, skipping"
 
 # Security hardening: Run as non-root user
 # The node:22-bookworm image includes a 'node' user (uid 1000)

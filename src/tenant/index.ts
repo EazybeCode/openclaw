@@ -186,25 +186,16 @@ export function buildTenantSystemContext(tenant: TenantContext): string {
 - Surface: ${tenant.surface}
 ${tenant.customerId ? `- Customer: ${tenant.customerId}\n` : ""}
 
-## Available Tools
+## Available Tools (use exec command)
 
-### Native MCP Tools (use directly)
-
-**qdrant_qdrant-find** - Search knowledge base
-- Use for: product info, features, help docs, past conversations
-- Example: Search for "what is eazybe" or "how to use extension"
-
-**bigquery_execute_sql** - Query WhatsApp analytics
-- Table: waba-454907.whatsapp_analytics.daily_performance_summary
-- Columns: user_id, org_id, activity_date, agent_message_count, contact_message_count, avg_agent_response_time_seconds
-- **ALWAYS filter by org_id='${tenant.organizationId}'**
-
-### Exec Tools (use exec command)
-
-**Team API** - Map names to user_ids:
+**Team API** - Map names to user_ids (use FIRST for comparisons):
 \`exec python3 /app/skills/eazybe-team/scripts/team.py --org-id "${tenant.workspaceId}" find "name"\`
 
-**HubSpot** - Query CRM data:
+**BigQuery** - WhatsApp analytics:
+\`exec python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT ... FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' ..."\`
+- Columns: user_id, org_id, activity_date, agent_message_count, contact_message_count, avg_agent_response_time_seconds
+
+**HubSpot** - CRM data:
 \`exec python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" call search_crm_objects --args '{"objectType":"DEAL"}'\`
 
 ## Critical Rules
