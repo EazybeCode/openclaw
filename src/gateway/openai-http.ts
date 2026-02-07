@@ -47,9 +47,9 @@ async function callRevAgent(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         query,
-        org_id: orgId,
-        workspace_id: workspaceId,
-        user_id: userId,
+        org_id: parseInt(orgId, 10) || 0,
+        workspace_id: parseInt(workspaceId, 10) || 0,
+        user_id: parseInt(userId, 10) || 0,
         stream: false,
       }),
       signal: AbortSignal.timeout(120000),
