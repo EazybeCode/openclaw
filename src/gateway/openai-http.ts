@@ -5,7 +5,12 @@ import { buildHistoryContextFromEntries, type HistoryEntry } from "../auto-reply
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommand } from "../commands/agent.js";
 import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
-import { buildMemoryContext, storeMemory } from "../memory/mem0-client.js";
+import {
+  buildMemoryContext,
+  storeMemory,
+  storeLearning,
+  getLearnings,
+} from "../memory/mem0-client.js";
 import { defaultRuntime } from "../runtime.js";
 import {
   extractTenantFromRequest,
@@ -174,6 +179,210 @@ type OpenAiChatCompletionRequest = {
 };
 
 // TenantContext is now imported from ../tenant/index.js
+
+// ============================================
+// SELF-IMPROVEMENT: CORRECTION DETECTION
+// ============================================
+
+interface CorrectionResult {
+  isCorrection: boolean;
+  trigger?: string;
+  lesson?: string;
+}
+
+/**
+ * Detect if the current message is a correction to a previous failed response
+ * Patterns detected:
+ * - "check X instead"
+ * - "look in Y"
+ * - "not there, try Z"
+ * - "you should have checked X"
+ * - "actually, it's in Y"
+ * - "use X for that"
+ */
+function detectCorrection(
+  currentMessage: string,
+  previousMessages: OpenAiChatMessage[],
+): CorrectionResult {
+  // Pattern definitions with capture groups for trigger/lesson extraction
+  const correctionPatterns: Array<{
+    pattern: RegExp;
+    extractLesson: (
+      match: RegExpMatchArray,
+      original: string,
+    ) => { trigger?: string; lesson: string };
+  }> = [
+    {
+      // "check hubspot notes" or "check X instead"
+      pattern: /^check\s+(.+?)(?:\s+instead)?[!.]?$/i,
+      extractLesson: (match, _original) => ({
+        lesson: `Also check ${match[1]}`,
+      }),
+    },
+    {
+      // "look in hubspot" or "look at X"
+      pattern: /^look\s+(?:in|at)\s+(.+?)[!.]?$/i,
+      extractLesson: (match, _original) => ({
+        lesson: `Look in ${match[1]}`,
+      }),
+    },
+    {
+      // "not there, try hubspot" or "not there, check X"
+      pattern: /^not\s+there[,.]?\s+(?:try|check)\s+(.+?)[!.]?$/i,
+      extractLesson: (match, _original) => ({
+        lesson: `Also check ${match[1]}`,
+      }),
+    },
+    {
+      // "you should have checked hubspot"
+      pattern: /^you\s+should\s+(?:have\s+)?check(?:ed)?\s+(.+?)[!.]?$/i,
+      extractLesson: (match, _original) => ({
+        lesson: `Should check ${match[1]}`,
+      }),
+    },
+    {
+      // "actually, it's in hubspot" or "actually it's in X"
+      pattern: /^actually[,.]?\s+(?:it'?s?|they(?:'re)?|that'?s?)\s+(?:in|on|at)\s+(.+?)[!.]?$/i,
+      extractLesson: (match, _original) => ({
+        lesson: `Check ${match[1]}`,
+      }),
+    },
+    {
+      // "use hubspot for that" or "use X"
+      pattern: /^use\s+(.+?)(?:\s+for\s+that)?[!.]?$/i,
+      extractLesson: (match, _original) => ({
+        lesson: `Use ${match[1]}`,
+      }),
+    },
+    {
+      // "try hubspot" or "try looking in X"
+      pattern: /^try\s+(?:looking\s+(?:in|at)\s+)?(.+?)[!.]?$/i,
+      extractLesson: (match, _original) => ({
+        lesson: `Try ${match[1]}`,
+      }),
+    },
+    {
+      // "it's in hubspot notes" or "they're in X"
+      pattern: /^(?:it'?s?|they(?:'re)?|that'?s?)\s+(?:in|on|at)\s+(.+?)[!.]?$/i,
+      extractLesson: (match, _original) => ({
+        lesson: `Check ${match[1]}`,
+      }),
+    },
+  ];
+
+  // Try to match correction patterns
+  for (const { pattern, extractLesson } of correctionPatterns) {
+    const match = currentMessage.match(pattern);
+    if (match) {
+      const { lesson } = extractLesson(match, currentMessage);
+
+      // Extract trigger from previous user message context
+      const trigger = extractTriggerFromHistory(previousMessages);
+
+      if (trigger && lesson) {
+        return {
+          isCorrection: true,
+          trigger,
+          lesson,
+        };
+      }
+    }
+  }
+
+  return { isCorrection: false };
+}
+
+/**
+ * Extract the main topic/trigger from recent conversation history
+ * Looks at the last user message before a failed assistant response
+ */
+function extractTriggerFromHistory(messages: OpenAiChatMessage[]): string | undefined {
+  // Look for the pattern: user question -> assistant response -> user correction
+  // We want to extract keywords from the original user question
+
+  const lastUserMessages: string[] = [];
+
+  for (let i = messages.length - 1; i >= 0 && lastUserMessages.length < 3; i--) {
+    const msg = messages[i];
+    if (msg?.role === "user") {
+      const content = extractTextContent(msg.content);
+      if (content) {
+        lastUserMessages.unshift(content);
+      }
+    }
+  }
+
+  if (lastUserMessages.length < 2) {
+    return undefined;
+  }
+
+  // The trigger is likely from the second-to-last user message (the original query)
+  const originalQuery = lastUserMessages[lastUserMessages.length - 2];
+
+  // Extract key nouns/topics from the query
+  const triggerWords = extractKeyTerms(originalQuery);
+
+  return triggerWords.length > 0 ? triggerWords[0] : undefined;
+}
+
+/**
+ * Extract key terms from a query that could serve as trigger words
+ */
+function extractKeyTerms(query: string): string[] {
+  const lowerQuery = query.toLowerCase();
+
+  // Common topic patterns to look for
+  const topicPatterns = [
+    /meeting(?:s)?/i,
+    /call(?:s)?/i,
+    /note(?:s)?/i,
+    /deal(?:s)?/i,
+    /contact(?:s)?/i,
+    /task(?:s)?/i,
+    /performance/i,
+    /analytics/i,
+    /response\s*time/i,
+    /message(?:s)?/i,
+    /customer(?:s)?/i,
+    /lead(?:s)?/i,
+    /sales/i,
+    /report(?:s)?/i,
+    /schedule/i,
+    /calendar/i,
+    /appointment(?:s)?/i,
+    /reminder(?:s)?/i,
+    /follow[\s-]?up(?:s)?/i,
+    /pipeline/i,
+    /revenue/i,
+    /team/i,
+    /agent(?:s)?/i,
+  ];
+
+  const terms: string[] = [];
+
+  for (const pattern of topicPatterns) {
+    const match = lowerQuery.match(pattern);
+    if (match) {
+      terms.push(match[0].replace(/\s+/g, " ").trim());
+    }
+  }
+
+  return terms;
+}
+
+/**
+ * Build enriched query with past learnings appended
+ */
+function buildEnrichedQuery(query: string, learnings: string[]): string {
+  if (learnings.length === 0) {
+    return query;
+  }
+
+  return `${query}
+
+## Past Learnings (apply these):
+${learnings.map((l) => `- ${l}`).join("\n")}`;
+}
 
 function writeSse(res: ServerResponse, data: unknown) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -414,9 +623,21 @@ export async function handleOpenAiHttpRequest(
 
       // Route ALL tenant queries to REV AGENT for planning
       if (hasTenant && tenantValidation.ok) {
+        // SELF-IMPROVEMENT: Retrieve learnings and enrich query
+        let enrichedMessage = prompt.message;
+        try {
+          const learnings = await getLearnings(prompt.message, tenant, 5);
+          if (learnings.length > 0) {
+            enrichedMessage = buildEnrichedQuery(prompt.message, learnings);
+            console.log(`[learning] Applied ${learnings.length} learnings to query`);
+          }
+        } catch (err) {
+          console.warn(`[learning] Failed to retrieve learnings:`, err);
+        }
+
         console.log(`[openai-http] REV AGENT: Routing query for planning`);
         const revAgentResult = await callRevAgent(
-          prompt.message,
+          enrichedMessage,
           tenant.organizationId,
           tenant.workspaceId,
           tenant.userId,
@@ -430,7 +651,7 @@ export async function handleOpenAiHttpRequest(
           console.log(`[openai-http] REV AGENT: Unavailable, falling back to OpenClaw`);
           const result = await agentCommand(
             {
-              message: prompt.message,
+              message: enrichedMessage,
               extraSystemPrompt,
               sessionKey,
               runId,
@@ -450,6 +671,23 @@ export async function handleOpenAiHttpRequest(
                   .filter(Boolean)
                   .join("\n\n")
               : "No response from OpenClaw.";
+        }
+
+        // SELF-IMPROVEMENT: Detect and store corrections
+        const previousMessages = asMessages(payload.messages);
+        const correction = detectCorrection(prompt.message, previousMessages);
+        if (correction.isCorrection && correction.trigger && correction.lesson) {
+          storeLearning(correction.trigger, correction.lesson, tenant)
+            .then((stored) => {
+              if (stored) {
+                console.log(
+                  `[learning] Stored correction: "${correction.trigger}" → "${correction.lesson}"`,
+                );
+              }
+            })
+            .catch((err) => {
+              console.warn(`[learning] Failed to store correction:`, err);
+            });
         }
       } else {
         // No tenant = direct OpenClaw

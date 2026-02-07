@@ -245,3 +245,84 @@ export async function storeMemory(
     return false;
   }
 }
+
+// ============================================
+// SELF-IMPROVEMENT LEARNING SYSTEM
+// ============================================
+
+/**
+ * Store a learning from user correction
+ * Learnings are org-level so all users benefit
+ */
+export async function storeLearning(
+  trigger: string,
+  lesson: string,
+  tenant: TenantContext,
+): Promise<boolean> {
+  const client = getMem0Client();
+  if (!client) {
+    return false;
+  }
+
+  try {
+    // Store at organization level so all users benefit
+    await client.addMemory(`When user mentions "${trigger}": ${lesson}`, {
+      tenant,
+      scopeLevel: "organization",
+      metadata: {
+        type: "learning",
+        trigger: trigger.toLowerCase(),
+        lesson,
+        learned_at: new Date().toISOString(),
+      },
+    });
+    console.log(`[learning] Stored: "${trigger}" → "${lesson}" for org ${tenant.organizationId}`);
+    return true;
+  } catch (err) {
+    console.error("[learning] Failed to store learning:", err);
+    return false;
+  }
+}
+
+/**
+ * Retrieve learnings relevant to a query
+ * Searches for learnings that match trigger words in the query
+ */
+export async function getLearnings(
+  query: string,
+  tenant: TenantContext,
+  limit: number = 5,
+): Promise<string[]> {
+  const client = getMem0Client();
+  if (!client) {
+    return [];
+  }
+
+  try {
+    // Search for relevant learnings at organization level
+    const results = await client.searchMemories(query, {
+      tenant,
+      scopeLevels: ["organization"],
+      limit,
+    });
+
+    // Filter to only learnings (type="learning" in metadata)
+    const learnings = results
+      .filter((r) => r.metadata?.type === "learning")
+      .map((r) => {
+        const lesson = r.metadata?.lesson;
+        return typeof lesson === "string" ? lesson : r.memory;
+      });
+
+    if (learnings.length > 0) {
+      console.log(
+        `[learning] Retrieved ${learnings.length} learnings for query: "${query.substring(0, 50)}..."`,
+      );
+    }
+
+    return learnings;
+  } catch (err) {
+    console.error("[learning] Failed to retrieve learnings:", err);
+    return [];
+  }
+}
