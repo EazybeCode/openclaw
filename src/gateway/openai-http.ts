@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import http from "node:http";
 import { buildHistoryContextFromEntries, type HistoryEntry } from "../auto-reply/reply/history.js";
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommand } from "../commands/agent.js";
@@ -26,6 +27,84 @@ import {
   writeDone,
 } from "./http-common.js";
 import { getBearerToken, resolveAgentIdForRequest, resolveSessionKey } from "./http-utils.js";
+
+// REV AGENT URL for planning and orchestration
+const REV_AGENT_URL = process.env.REV_AGENT_URL || "http://localhost:8001";
+
+/**
+ * Call REV AGENT for planning and orchestration
+ */
+async function callRevAgent(
+  query: string,
+  orgId: string,
+  workspaceId: string,
+  userId: string,
+): Promise<{ response: string; reasoning_trace?: string[] } | null> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      console.warn(`[rev-agent] Request timed out`);
+      resolve(null);
+    }, 120000);
+
+    try {
+      const postData = JSON.stringify({
+        query,
+        org_id: orgId,
+        workspace_id: workspaceId,
+        user_id: userId,
+        stream: false,
+      });
+
+      const url = new URL(`${REV_AGENT_URL}/api/v1/chat`);
+      const reqOptions = {
+        hostname: url.hostname,
+        port: url.port || 8001,
+        path: url.pathname,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(postData),
+        },
+      };
+
+      const req = http.request(reqOptions, (res) => {
+        let data = "";
+        res.on("data", (chunk) => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          clearTimeout(timeout);
+          try {
+            const result = JSON.parse(data);
+            if (result.response) {
+              console.log(`[rev-agent] Success: ${result.response.substring(0, 100)}...`);
+              resolve({ response: result.response, reasoning_trace: result.reasoning_trace });
+            } else {
+              console.warn(`[rev-agent] No response in result`);
+              resolve(null);
+            }
+          } catch (err) {
+            console.warn(`[rev-agent] Parse error: ${err}`);
+            resolve(null);
+          }
+        });
+      });
+
+      req.on("error", (err) => {
+        clearTimeout(timeout);
+        console.warn(`[rev-agent] Request error: ${err.message}`);
+        resolve(null);
+      });
+
+      req.write(postData);
+      req.end();
+    } catch (err) {
+      clearTimeout(timeout);
+      console.warn(`[rev-agent] Error: ${err}`);
+      resolve(null);
+    }
+  });
+}
 
 /**
  * Search Qdrant knowledge base for relevant information
@@ -359,28 +438,72 @@ export async function handleOpenAiHttpRequest(
 
   if (!stream) {
     try {
-      const result = await agentCommand(
-        {
-          message: prompt.message,
-          extraSystemPrompt,
-          sessionKey,
-          runId,
-          deliver: false,
-          messageChannel: "webchat",
-          bestEffortDeliver: false,
-        },
-        defaultRuntime,
-        deps,
-      );
+      let content: string;
 
-      const payloads = (result as { payloads?: Array<{ text?: string }> } | null)?.payloads;
-      const content =
-        Array.isArray(payloads) && payloads.length > 0
-          ? payloads
-              .map((p) => (typeof p.text === "string" ? p.text : ""))
-              .filter(Boolean)
-              .join("\n\n")
-          : "No response from OpenClaw.";
+      // Route ALL tenant queries to REV AGENT for planning
+      if (hasTenant && tenantValidation.ok) {
+        console.log(`[openai-http] REV AGENT: Routing query for planning`);
+        const revAgentResult = await callRevAgent(
+          prompt.message,
+          tenant.organizationId,
+          tenant.workspaceId,
+          tenant.userId,
+        );
+
+        if (revAgentResult?.response) {
+          content = revAgentResult.response;
+          console.log(`[openai-http] REV AGENT: Got response`);
+        } else {
+          // Fallback to OpenClaw if REV AGENT unavailable
+          console.log(`[openai-http] REV AGENT: Unavailable, falling back to OpenClaw`);
+          const result = await agentCommand(
+            {
+              message: prompt.message,
+              extraSystemPrompt,
+              sessionKey,
+              runId,
+              deliver: false,
+              messageChannel: "webchat",
+              bestEffortDeliver: false,
+            },
+            defaultRuntime,
+            deps,
+          );
+
+          const payloads = (result as { payloads?: Array<{ text?: string }> } | null)?.payloads;
+          content =
+            Array.isArray(payloads) && payloads.length > 0
+              ? payloads
+                  .map((p) => (typeof p.text === "string" ? p.text : ""))
+                  .filter(Boolean)
+                  .join("\n\n")
+              : "No response from OpenClaw.";
+        }
+      } else {
+        // No tenant = direct OpenClaw
+        const result = await agentCommand(
+          {
+            message: prompt.message,
+            extraSystemPrompt,
+            sessionKey,
+            runId,
+            deliver: false,
+            messageChannel: "webchat",
+            bestEffortDeliver: false,
+          },
+          defaultRuntime,
+          deps,
+        );
+
+        const payloads = (result as { payloads?: Array<{ text?: string }> } | null)?.payloads;
+        content =
+          Array.isArray(payloads) && payloads.length > 0
+            ? payloads
+                .map((p) => (typeof p.text === "string" ? p.text : ""))
+                .filter(Boolean)
+                .join("\n\n")
+            : "No response from OpenClaw.";
+      }
 
       // Store conversation to Mem0 - it automatically extracts relevant memories
       if (hasTenant && tenantValidation.ok) {
