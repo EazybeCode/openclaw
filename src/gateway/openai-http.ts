@@ -56,7 +56,8 @@ async function callRevAgent(
     });
 
     if (!response.ok) {
-      console.warn(`[rev-agent] HTTP ${response.status}: ${response.statusText}`);
+      const errorBody = await response.text();
+      console.warn(`[rev-agent] HTTP ${response.status}: ${response.statusText} - ${errorBody}`);
       return null;
     }
 
