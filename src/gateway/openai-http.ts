@@ -57,9 +57,6 @@ async function callRevAgent(
 
       const url = new URL(`${REV_AGENT_URL}/api/v1/chat`);
       const reqOptions = {
-        hostname: url.hostname,
-        port: url.port || 80,
-        path: url.pathname,
         method: "POST",
         headers: {
           "Content-Type": "application/json",
