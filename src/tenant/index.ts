@@ -208,24 +208,26 @@ export function buildTenantSystemContext(tenant: TenantContext): string {
 
   // Add HubSpot CRM data source
   context += `\n## Available Data Sources - HubSpot CRM\n`;
+  context += `\nYou have access to HubSpot CRM data. Use the exec tool to run Python commands.\n`;
   context += `\n### How to Query HubSpot:\n`;
-  context += `Run: python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" <command>\n`;
-  context += `\n### Available Commands:\n`;
-  context += `- **list-tools**: List all available HubSpot tools\n`;
-  context += `- **call <tool_name> --args '{"key":"value"}'**: Call a specific tool\n`;
-  context += `\n### Common HubSpot Tools:\n`;
-  context += `- hubspot_search_contacts: Search for contacts\n`;
-  context += `- hubspot_search_deals: Search for deals/opportunities\n`;
-  context += `- hubspot_search_companies: Search for companies\n`;
-  context += `- hubspot_get_contact: Get contact by ID\n`;
-  context += `- hubspot_get_deal: Get deal by ID\n`;
-  context += `\n### Example Commands:\n`;
-  context += `- List tools: python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" list-tools\n`;
-  context += `- Search contacts: python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" call hubspot_search_contacts --args '{"query":"email:*@example.com"}'\n`;
+  context += `Use the exec tool to run: python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" <command>\n`;
+  context += `\n### HubSpot Tools (use with "call <tool_name>"):\n`;
+  context += `- **search_crm_objects**: Search for deals, contacts, companies, tickets\n`;
+  context += `- **get_crm_objects**: Get specific objects by ID\n`;
+  context += `- **search_properties**: Find available fields for an object type\n`;
+  context += `- **search_owners**: List users/owners in HubSpot\n`;
+  context += `\n### Example Commands (COPY EXACTLY):\n`;
+  context += `\n**Get latest deals:**\n`;
+  context += `python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" call search_crm_objects --args '{"objectType":"DEAL","limit":5}'\n`;
+  context += `\n**Search contacts:**\n`;
+  context += `python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" call search_crm_objects --args '{"objectType":"CONTACT","limit":10}'\n`;
+  context += `\n**Search companies:**\n`;
+  context += `python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" call search_crm_objects --args '{"objectType":"COMPANY","limit":10}'\n`;
   context += `\n### When to use HubSpot:\n`;
+  context += `- Questions about deals, opportunities, pipeline\n`;
   context += `- Questions about contacts, leads, customers\n`;
-  context += `- Deal/opportunity information and pipeline status\n`;
   context += `- Company and account data\n`;
+  context += `\nIMPORTANT: Always use the exec tool to run these Python commands.\n`;
 
   return context;
 }
