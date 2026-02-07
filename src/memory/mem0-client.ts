@@ -295,16 +295,21 @@ export async function getLearnings(
 ): Promise<string[]> {
   const client = getMem0Client();
   if (!client) {
+    console.log(`[learning] No Mem0 client available`);
     return [];
   }
 
   try {
+    console.log(`[learning] Searching for learnings (org: ${tenant.organizationId})`);
+
     // Search for relevant learnings at organization level
     const results = await client.searchMemories(query, {
       tenant,
       scopeLevels: ["organization"],
       limit,
     });
+
+    console.log(`[learning] Mem0 returned ${results.length} org-level memories`);
 
     // Filter to only learnings (type="learning" in metadata)
     const learnings = results
@@ -315,9 +320,9 @@ export async function getLearnings(
       });
 
     if (learnings.length > 0) {
-      console.log(
-        `[learning] Retrieved ${learnings.length} learnings for query: "${query.substring(0, 50)}..."`,
-      );
+      console.log(`[learning] Found ${learnings.length} learnings to apply`);
+    } else if (results.length > 0) {
+      console.log(`[learning] ${results.length} memories but none are learnings`);
     }
 
     return learnings;
