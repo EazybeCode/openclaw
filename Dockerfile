@@ -43,6 +43,9 @@ ENV NODE_ENV=production
 # BigQuery MCP server URL
 ENV BIGQUERY_MCP_URL=http://ck8c84oo40gkcwwk4gcokco0.5.161.117.36.sslip.io
 
+# Qdrant MCP server URL (knowledge base semantic search)
+ENV QDRANT_MCP_URL=http://gw80os8k0kcgc488o0gw0so8.5.161.117.36.sslip.io
+
 # HubSpot OAuth credentials (for token refresh)
 ENV HUBSPOT_CLIENT_ID="0c40c683-cfae-43cf-9450-7eefa4f4a752"
 ENV HUBSPOT_CLIENT_SECRET="5cc628fe-1d67-463f-a0b3-3d3c13dbf390"

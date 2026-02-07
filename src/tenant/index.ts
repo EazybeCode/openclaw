@@ -275,6 +275,29 @@ python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT user_id, AVG(
 python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT user_id, AVG(avg_agent_response_time_seconds) as avg_response_time, SUM(agent_message_count) as total_messages FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' AND user_id IN ('USER1', 'USER2') GROUP BY user_id"
 \`\`\`
 
+### 3. Qdrant Knowledge Base (Semantic Search)
+Use the exec tool to run: python3 /app/skills/qdrant-mcp/scripts/qdrant.py <command>
+
+**Collection:** knowledge_base_v2
+
+**Use for:**
+- Searching past conversations and chat history
+- Finding similar customer issues or patterns
+- Contextual/semantic search (not exact keyword matching)
+- Documentation and help articles
+
+**Commands:**
+\`\`\`
+# Semantic search
+python3 /app/skills/qdrant-mcp/scripts/qdrant.py search "customer complaint about billing"
+
+# Search with more results
+python3 /app/skills/qdrant-mcp/scripts/qdrant.py search "how to handle refund requests" --limit 10
+
+# List available tools
+python3 /app/skills/qdrant-mcp/scripts/qdrant.py list-tools
+\`\`\`
+
 ---
 
 ## Critical: How to Handle Comparison Queries
