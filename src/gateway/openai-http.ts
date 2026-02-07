@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import http from "node:http";
 import { buildHistoryContextFromEntries, type HistoryEntry } from "../auto-reply/reply/history.js";
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommand } from "../commands/agent.js";
@@ -40,67 +39,42 @@ async function callRevAgent(
   workspaceId: string,
   userId: string,
 ): Promise<{ response: string; reasoning_trace?: string[] } | null> {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      console.warn(`[rev-agent] Request timed out`);
-      resolve(null);
-    }, 120000);
+  try {
+    console.log(`[rev-agent] Calling ${REV_AGENT_URL}/api/v1/chat`);
 
-    try {
-      const postData = JSON.stringify({
+    const response = await fetch(`${REV_AGENT_URL}/api/v1/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
         query,
         org_id: orgId,
         workspace_id: workspaceId,
         user_id: userId,
         stream: false,
-      });
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
 
-      const url = new URL(`${REV_AGENT_URL}/api/v1/chat`);
-      const reqOptions = {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(postData),
-        },
-      };
-
-      const req = http.request(reqOptions, (res) => {
-        let data = "";
-        res.on("data", (chunk) => {
-          data += chunk;
-        });
-        res.on("end", () => {
-          clearTimeout(timeout);
-          try {
-            const result = JSON.parse(data);
-            if (result.response) {
-              console.log(`[rev-agent] Success: ${result.response.substring(0, 100)}...`);
-              resolve({ response: result.response, reasoning_trace: result.reasoning_trace });
-            } else {
-              console.warn(`[rev-agent] No response in result`);
-              resolve(null);
-            }
-          } catch (err) {
-            console.warn(`[rev-agent] Parse error: ${err}`);
-            resolve(null);
-          }
-        });
-      });
-
-      req.on("error", (err) => {
-        clearTimeout(timeout);
-        console.warn(`[rev-agent] Request error: ${err.message}`);
-        resolve(null);
-      });
-
-      req.write(postData);
-      req.end();
-    } catch (err) {
-      clearTimeout(timeout);
-      console.warn(`[rev-agent] Error: ${err}`);
-      resolve(null);
+    if (!response.ok) {
+      console.warn(`[rev-agent] HTTP ${response.status}: ${response.statusText}`);
+      return null;
     }
-  });
+
+    const result = await response.json();
+    if (result.response) {
+      console.log(`[rev-agent] Success: ${result.response.substring(0, 100)}...`);
+      return { response: result.response, reasoning_trace: result.reasoning_trace };
+    }
+
+    console.warn(
+      `[rev-agent] No response field in result:`,
+      JSON.stringify(result).substring(0, 200),
+    );
+    return null;
+  } catch (err) {
+    console.warn(`[rev-agent] Error: ${err}`);
+    return null;
+  }
 }
 
 /**
