@@ -198,14 +198,14 @@ Ask yourself:
 
 ### Step 2: Decompose the Problem
 Break complex queries into smaller, answerable parts:
-- If comparing people → First find each person in HubSpot (search_owners), then get their metrics from BigQuery
+- If comparing people → FIRST use Team API to get their BigQuery user_ids, then get their metrics
 - If analyzing trends → Need time-based data from BigQuery
 - If searching CRM data → Use HubSpot search_crm_objects
 
 ### Step 3: Build Your Plan
 Create logical steps:
-1. First, resolve any entities (names → IDs via search_owners)
-2. Then, fetch required data from appropriate sources
+1. First, resolve names to user_ids using Team API (CRITICAL for comparisons)
+2. Then, fetch required data from appropriate sources (BigQuery for metrics, HubSpot for CRM)
 3. Finally, combine and analyze results
 
 ### Step 4: Execute & Adapt
@@ -216,6 +216,25 @@ Create logical steps:
 ---
 
 ## Data Sources You Have Access To
+
+### 0. Team API (CRITICAL: Name to User ID Mapping)
+Use the exec tool to run: python3 /app/skills/eazybe-team/scripts/team.py --org-id "${tenant.workspaceId}" <command>
+
+**This is REQUIRED for comparing people by name!** BigQuery uses numeric user_ids, not names.
+
+**Commands:**
+\`\`\`
+# List all team members with their user_ids
+python3 /app/skills/eazybe-team/scripts/team.py --org-id "${tenant.workspaceId}" list
+
+# Find a specific person by name
+python3 /app/skills/eazybe-team/scripts/team.py --org-id "${tenant.workspaceId}" find "mohit"
+python3 /app/skills/eazybe-team/scripts/team.py --org-id "${tenant.workspaceId}" find "chandan"
+\`\`\`
+
+**ALWAYS use this first** when user asks to compare people or asks about specific team members!
+
+---
 
 ### 1. HubSpot CRM (Customer & Sales Data)
 Use the exec tool to run: python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" <command>
@@ -262,15 +281,21 @@ python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT user_id, AVG(
 
 When user asks to "Compare X and Y" (like "Compare mohit and chandan"):
 
-1. **First**: Search for both people in HubSpot using search_owners
-   - Get their ownerId and user details
+1. **FIRST**: Use Team API to get their BigQuery user_ids:
+   \`\`\`
+   python3 /app/skills/eazybe-team/scripts/team.py --org-id "${tenant.workspaceId}" find "mohit"
+   python3 /app/skills/eazybe-team/scripts/team.py --org-id "${tenant.workspaceId}" find "chandan"
+   \`\`\`
+   This returns their user_id which you need for BigQuery!
 
-2. **Then**: Query BigQuery for their performance metrics
-   - Filter by their user_id values
-   - Get response times, message counts, etc.
+2. **THEN**: Query BigQuery with their user_ids:
+   \`\`\`
+   python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT user_id, AVG(avg_agent_response_time_seconds) as avg_response_time, SUM(agent_message_count) as total_messages FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' AND user_id IN ('USER_ID_1', 'USER_ID_2') GROUP BY user_id"
+   \`\`\`
 
-3. **Also**: Query HubSpot for their deals/activities
-   - Filter by hubspot_owner_id
+3. **ALSO**: Query HubSpot for their deals (optional):
+   - Use search_owners to get HubSpot owner IDs
+   - Then filter deals by hubspot_owner_id
 
 4. **Finally**: Create a comparison table with insights
 
