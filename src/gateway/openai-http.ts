@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { buildHistoryContextFromEntries, type HistoryEntry } from "../auto-reply/reply/history.js";
 import { createDefaultDeps } from "../cli/deps.js";
@@ -25,6 +26,61 @@ import {
   writeDone,
 } from "./http-common.js";
 import { getBearerToken, resolveAgentIdForRequest, resolveSessionKey } from "./http-utils.js";
+
+/**
+ * Search Qdrant knowledge base for relevant information
+ */
+async function searchQdrant(query: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      resolve(null);
+    }, 10000);
+
+    try {
+      const child = spawn("python3", ["/app/skills/qdrant-mcp/scripts/qdrant.py", "search", query]);
+
+      let stdout = "";
+      let stderr = "";
+
+      child.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      child.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      child.on("close", (code) => {
+        clearTimeout(timeout);
+        if (code === 0 && stdout.trim()) {
+          resolve(stdout.trim());
+        } else {
+          console.warn(`[qdrant] Search failed: ${stderr || "no output"}`);
+          resolve(null);
+        }
+      });
+
+      child.on("error", (err) => {
+        clearTimeout(timeout);
+        console.warn(`[qdrant] Spawn error: ${err.message}`);
+        resolve(null);
+      });
+    } catch (err) {
+      clearTimeout(timeout);
+      console.warn(`[qdrant] Error: ${err}`);
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Check if the message should trigger a Qdrant knowledge base search.
+ * Always returns true - let semantic search decide what's relevant.
+ */
+function shouldSearchKnowledgeBase(_message: string): boolean {
+  // Always search Qdrant for context - semantic search will determine relevance
+  return true;
+}
 
 type OpenAiHttpOptions = {
   auth: ResolvedGatewayAuth;
@@ -251,6 +307,24 @@ export async function handleOpenAiHttpRequest(
       }
     } catch (err) {
       console.warn(`[openai-http] Mem0 error:`, err);
+    }
+
+    // RAG: Search Qdrant knowledge base for relevant context
+    if (shouldSearchKnowledgeBase(prompt.message)) {
+      console.log(`[openai-http] Qdrant: Searching for "${prompt.message.substring(0, 50)}..."`);
+      try {
+        const qdrantResults = await searchQdrant(prompt.message);
+        if (qdrantResults) {
+          extraSystemPrompt =
+            extraSystemPrompt +
+            `\n\n## Knowledge Base Search Results\n\nThe following information was found in the knowledge base. Use this to answer the user's question:\n\n${qdrantResults}`;
+          console.log(`[openai-http] Qdrant: Found ${qdrantResults.length} chars of results`);
+        } else {
+          console.log(`[openai-http] Qdrant: No results found`);
+        }
+      } catch (err) {
+        console.warn(`[openai-http] Qdrant error:`, err);
+      }
     }
   }
   if (!prompt.message) {
