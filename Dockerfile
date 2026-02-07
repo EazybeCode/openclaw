@@ -43,7 +43,11 @@ ENV NODE_ENV=production
 # BigQuery MCP server URL
 ENV BIGQUERY_MCP_URL=http://ck8c84oo40gkcwwk4gcokco0.5.161.117.36.sslip.io
 
-# HubSpot MCP access token (set in Coolify env vars per-user/org)
+# HubSpot OAuth credentials (for token refresh)
+ENV HUBSPOT_CLIENT_ID="0c40c683-cfae-43cf-9450-7eefa4f4a752"
+ENV HUBSPOT_CLIENT_SECRET="5cc628fe-1d67-463f-a0b3-3d3c13dbf390"
+
+# HubSpot MCP access token (fallback, not needed with MongoDB)
 ENV HUBSPOT_ACCESS_TOKEN=""
 
 # Allow non-root user to write temp files during runtime/tests.
