@@ -674,20 +674,26 @@ export async function handleOpenAiHttpRequest(
         }
 
         // SELF-IMPROVEMENT: Detect and store corrections
-        const previousMessages = asMessages(payload.messages);
-        const correction = detectCorrection(prompt.message, previousMessages);
-        if (correction.isCorrection && correction.trigger && correction.lesson) {
-          storeLearning(correction.trigger, correction.lesson, tenant)
-            .then((stored) => {
-              if (stored) {
-                console.log(
-                  `[learning] Stored correction: "${correction.trigger}" → "${correction.lesson}"`,
-                );
-              }
-            })
-            .catch((err) => {
-              console.warn(`[learning] Failed to store correction:`, err);
-            });
+        // Extract raw last user message (not the formatted prompt.message which includes history)
+        const allMessages = asMessages(payload.messages);
+        const lastUserMsg = allMessages.filter((m) => m.role === "user").pop();
+        const rawLastUserMessage = lastUserMsg ? extractTextContent(lastUserMsg.content) : "";
+
+        if (rawLastUserMessage) {
+          const correction = detectCorrection(rawLastUserMessage, allMessages);
+          if (correction.isCorrection && correction.trigger && correction.lesson) {
+            storeLearning(correction.trigger, correction.lesson, tenant)
+              .then((stored) => {
+                if (stored) {
+                  console.log(
+                    `[learning] Stored correction: "${correction.trigger}" → "${correction.lesson}"`,
+                  );
+                }
+              })
+              .catch((err) => {
+                console.warn(`[learning] Failed to store correction:`, err);
+              });
+          }
         }
       } else {
         // No tenant = direct OpenClaw
