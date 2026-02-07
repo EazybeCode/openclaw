@@ -1,12 +1,23 @@
 ---
 name: hubspot-mcp
-description: "Query HubSpot CRM data. Get contacts, deals, companies, and engagement metrics."
+description: "Query HubSpot CRM. Use for: deals, contacts, companies, pipelines, sales data, CRM records."
 metadata: { "openclaw": { "emoji": "🔶", "requires": { "bins": ["python3"] }, "env": [] } }
 ---
 
 # HubSpot MCP Skill
 
 Query HubSpot CRM data through the HubSpot MCP server.
+
+## When to Use This Skill
+
+Use HubSpot when the user asks about:
+
+- **Deals/Sales**: "Show my deals", "Pipeline status", "Deal value", "Won/Lost deals"
+- **Contacts**: "Find contact", "Customer info", "Lead details"
+- **Companies**: "Company info", "Account details"
+- **CRM data**: "Sales metrics", "Revenue data", "Customer records"
+
+**IMPORTANT**: Always pass --org-id and --workspace-id from tenant context!
 
 ## Token Management
 

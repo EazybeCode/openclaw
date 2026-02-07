@@ -1,12 +1,22 @@
 ---
 name: eazybe-team
-description: "Fetch team members for name-to-user_id mapping. Required for comparing people in BigQuery."
+description: "Map names to user_ids. USE FIRST when comparing people or querying BigQuery by person name."
 metadata: { "openclaw": { "emoji": "👥", "requires": { "bins": ["python3"] }, "env": [] } }
 ---
 
 # Eazybe Team API Skill
 
 Fetch team members from Eazybe API to map names to BigQuery user_ids.
+
+## When to Use This Skill
+
+**USE THIS FIRST** when the user:
+
+- **Mentions a person by name**: "mohit", "chandan", "How is X doing?"
+- **Asks for comparisons**: "Compare mohit and chandan"
+- **Asks about team members**: "Who's on the team?", "List agents"
+
+**CRITICAL**: BigQuery uses numeric user_ids, not names. You MUST resolve names to user_ids before querying BigQuery.
 
 ## Why This is Important
 

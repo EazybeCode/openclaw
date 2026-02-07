@@ -174,39 +174,25 @@ export function tenantToString(tenant: TenantContext): string {
 
 /**
  * Build system prompt context from tenant
+ * Provides tenant identity - skills describe themselves via SKILL.md
  */
 export function buildTenantSystemContext(tenant: TenantContext): string {
-  const context = `You are an autonomous Revenue Intelligence Agent for Eazybe.
+  return `You are an autonomous Revenue Intelligence Agent for Eazybe.
 
-## Tenant Context
-- Organization ID: ${tenant.organizationId}
-- Workspace ID: ${tenant.workspaceId}
-- Team: ${tenant.teamId}
-- User: ${tenant.userId}
-- Surface: ${tenant.surface}
-${tenant.customerId ? `- Customer: ${tenant.customerId}\n` : ""}
+## Current Tenant
+- org_id: ${tenant.organizationId}
+- workspace_id: ${tenant.workspaceId}
+- team_id: ${tenant.teamId}
+- user_id: ${tenant.userId}
+- surface: ${tenant.surface}
+${tenant.customerId ? `- customer_id: ${tenant.customerId}\n` : ""}
 
-## Available Tools (use exec command)
-
-**Team API** - Map names to user_ids (use FIRST for comparisons):
-\`exec python3 /app/skills/eazybe-team/scripts/team.py --org-id "${tenant.workspaceId}" find "name"\`
-
-**BigQuery** - WhatsApp analytics:
-\`exec python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT ... FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' ..."\`
-- Columns: user_id, org_id, activity_date, agent_message_count, contact_message_count, avg_agent_response_time_seconds
-
-**HubSpot** - CRM data:
-\`exec python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "${tenant.organizationId}" --workspace-id "${tenant.workspaceId}" call search_crm_objects --args '{"objectType":"DEAL"}'\`
-
-## Critical Rules
-
-1. **NEVER make up information** - always use tools
-2. **BigQuery**: ALWAYS include WHERE org_id='${tenant.organizationId}'
-3. **Comparisons**: First get user_ids from Team API, then query BigQuery
-4. **Be specific**: Include numbers, create tables for comparisons
+## Important Rules
+1. NEVER make up information - always use the available skills/tools
+2. When querying data, ALWAYS filter by org_id='${tenant.organizationId}'
+3. For user comparisons, first resolve names to user_ids, then query analytics
+4. Be specific with numbers, create tables for comparisons
 `;
-
-  return context;
 }
 
 /**

@@ -75,10 +75,27 @@ async function searchQdrant(query: string): Promise<string | null> {
 
 /**
  * Check if the message should trigger a Qdrant knowledge base search.
- * Always returns true - let semantic search decide what's relevant.
+ * Skip for analytics/comparison queries that should use BigQuery instead.
  */
-function shouldSearchKnowledgeBase(_message: string): boolean {
-  // Always search Qdrant for context - semantic search will determine relevance
+function shouldSearchKnowledgeBase(message: string): boolean {
+  const lowerMessage = message.toLowerCase();
+
+  // Skip Qdrant for analytics/metrics/comparison queries - these should use BigQuery
+  const analyticsPatterns = [
+    /compare\s+\w+\s+(and|vs|with)\s+\w+/i, // "compare X and Y"
+    /performance|metrics|analytics|stats/i,
+    /response\s*time|avg\s*response/i,
+    /message\s*count|total\s*messages/i,
+    /how\s+(many|much)|count|sum|average/i,
+    /top\s+\d+|best|worst|fastest|slowest/i,
+    /last\s+(week|month|day|\d+\s*days)/i,
+  ];
+
+  if (analyticsPatterns.some((p) => p.test(lowerMessage))) {
+    return false; // Don't search Qdrant for analytics queries
+  }
+
+  // Search Qdrant for general knowledge questions
   return true;
 }
 

@@ -1,6 +1,6 @@
 ---
 name: bigquery-mcp
-description: "Query WhatsApp Analytics data from BigQuery. Get response times, message counts, conversation metrics, and performance insights."
+description: "Query WhatsApp Analytics. Use for: response times, message counts, performance comparisons, agent metrics, conversation stats."
 metadata:
   {
     "openclaw": { "emoji": "📊", "requires": { "bins": ["python3"] }, "env": ["BIGQUERY_MCP_URL"] },
@@ -10,6 +10,18 @@ metadata:
 # BigQuery MCP Skill
 
 Query WhatsApp Analytics data warehouse through the BigQuery MCP server.
+
+## When to Use This Skill
+
+Use BigQuery when the user asks about:
+
+- **Response times**: "What's the average response time?", "How fast does X respond?"
+- **Message counts**: "How many messages did X send?", "Total messages this week"
+- **Performance comparisons**: "Compare X and Y", "Who is faster?", "Top performers"
+- **Agent metrics**: "Show agent stats", "Performance dashboard"
+- **Time-based analysis**: "Last 7 days", "This month", "Trending"
+
+**IMPORTANT**: Always include `WHERE org_id='<tenant_org_id>'` in queries!
 
 ## Dataset: whatsapp_analytics
 

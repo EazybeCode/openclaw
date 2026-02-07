@@ -1,12 +1,23 @@
 ---
 name: qdrant-mcp
-description: "Semantic search on knowledge base. Search chat history, documentation, and customer conversations."
+description: "Search knowledge base. Use for: product questions, company info, feature explanations, documentation, how-to questions."
 metadata: { "openclaw": { "emoji": "🔍", "requires": { "bins": ["python3"] }, "env": [] } }
 ---
 
 # Qdrant MCP Skill
 
 Semantic search on the Qdrant knowledge base using vector similarity.
+
+## When to Use This Skill
+
+Use Qdrant when the user asks about:
+
+- **Product/Company info**: "What is Eazybe?", "What features do you have?"
+- **How-to questions**: "How do I...", "How can I..."
+- **Documentation**: "How does X work?", "Explain feature Y"
+- **Past conversations**: "Did anyone ask about...", "Similar issues"
+
+**DO NOT use for**: Analytics, metrics, comparisons, numbers (use BigQuery instead)
 
 ## Use Cases
 
