@@ -14,8 +14,10 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
-# Install pymongo for HubSpot MCP skill (MongoDB token lookup)
-RUN pip3 install --no-cache-dir --break-system-packages pymongo
+# Install Python packages for MCP skills
+# - pymongo: HubSpot MCP skill (MongoDB token lookup)
+# - mcp: Qdrant MCP skill (SSE transport)
+RUN pip3 install --no-cache-dir --break-system-packages pymongo mcp
 
 ARG OPENCLAW_DOCKER_APT_PACKAGES=""
 RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \

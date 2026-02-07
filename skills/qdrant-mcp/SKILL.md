@@ -43,7 +43,8 @@ python3 skills/qdrant-mcp/scripts/qdrant.py call qdrant-find --args '{"collectio
 
 ## Configuration
 
-- **MCP Server**: `http://gw80os8k0kcgc488o0gw0so8.5.161.117.36.sslip.io`
+- **MCP Server**: `http://gw80os8k0kcgc488o0gw0so8.5.161.117.36.sslip.io/sse`
+- **Transport**: SSE (Server-Sent Events) via MCP Python SDK
 - **Default Collection**: `knowledge_base_v2`
 
 ## When to Use Qdrant

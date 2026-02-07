@@ -1,96 +1,120 @@
 #!/usr/bin/env python3
 """
-Qdrant MCP Client - Connect to Qdrant MCP server for semantic search.
-Uses JSON-RPC 2.0 over HTTP (simplified, no SSE).
+Qdrant MCP Client - Connect to Qdrant MCP server via SSE transport.
+Uses the official MCP Python SDK with Server-Sent Events.
 """
 
 import os
 import sys
 import json
 import argparse
-import urllib.request
-import urllib.error
-import ssl
+import asyncio
 
-# Qdrant MCP server URL (HTTP endpoint, not SSE)
+# Qdrant MCP server URL (SSE endpoint)
 QDRANT_MCP_URL = os.environ.get(
     "QDRANT_MCP_URL",
     "http://gw80os8k0kcgc488o0gw0so8.5.161.117.36.sslip.io"
 )
 
+# Ensure we use /sse endpoint
+if not QDRANT_MCP_URL.endswith("/sse"):
+    QDRANT_MCP_URL = QDRANT_MCP_URL.rstrip("/") + "/sse"
+
 # Default collection name
 DEFAULT_COLLECTION = "knowledge_base_v2"
 
 
-def mcp_request(method: str, params: dict = None, request_id: int = 1):
-    """Send JSON-RPC 2.0 request to Qdrant MCP server."""
-    # Try /mcp endpoint first (like BigQuery)
-    url = f"{QDRANT_MCP_URL}/mcp"
-
-    payload = {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": method,
-        "params": params or {}
-    }
-
-    data = json.dumps(payload).encode('utf-8')
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-
-    req = urllib.request.Request(url, data=data, headers=headers, method='POST')
-
+async def list_tools_async():
+    """List available Qdrant tools using MCP SDK SSE."""
     try:
-        ctx = ssl.create_default_context()
-        with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            return result
-    except urllib.error.HTTPError as e:
-        error_body = ""
-        try:
-            error_body = e.read().decode('utf-8')
-        except:
-            pass
-        return {"error": {"code": e.code, "message": f"{e.reason}: {error_body}"}}
-    except urllib.error.URLError as e:
-        return {"error": {"code": -1, "message": str(e.reason)}}
+        from mcp import ClientSession
+        from mcp.client.sse import sse_client
+
+        async with sse_client(QDRANT_MCP_URL) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                tools_result = await session.list_tools()
+
+                if tools_result and tools_result.tools:
+                    tools = []
+                    for tool in tools_result.tools:
+                        tool_info = {
+                            "name": tool.name,
+                            "description": tool.description or ""
+                        }
+                        if hasattr(tool, 'inputSchema') and tool.inputSchema:
+                            if hasattr(tool.inputSchema, 'model_dump'):
+                                tool_info["parameters"] = tool.inputSchema.model_dump()
+                            elif isinstance(tool.inputSchema, dict):
+                                tool_info["parameters"] = tool.inputSchema
+                        tools.append(tool_info)
+                    return {"tools": tools}
+                return {"tools": []}
+    except ImportError as e:
+        return {"error": f"MCP SDK not installed. Run: pip install mcp. Error: {e}"}
     except Exception as e:
-        return {"error": {"code": -1, "message": str(e)}}
+        return {"error": str(e)}
 
 
-def initialize():
-    """Initialize MCP connection."""
-    return mcp_request("initialize", {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {
-            "name": "openclaw-qdrant",
-            "version": "1.0.0"
-        }
-    })
+async def call_tool_async(tool_name: str, arguments: dict):
+    """Call a Qdrant tool using MCP SDK SSE."""
+    try:
+        from mcp import ClientSession
+        from mcp.client.sse import sse_client
+
+        async with sse_client(QDRANT_MCP_URL) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(tool_name, arguments)
+
+                # Check for error
+                if hasattr(result, 'isError') and result.isError:
+                    error_messages = []
+                    if hasattr(result, 'content') and result.content:
+                        for item in result.content if isinstance(result.content, list) else [result.content]:
+                            if hasattr(item, 'text'):
+                                error_messages.append(item.text)
+                            else:
+                                error_messages.append(str(item))
+                    return {"error": " | ".join(error_messages) if error_messages else "Unknown error"}
+
+                # Extract content from result
+                if hasattr(result, 'content') and result.content:
+                    if isinstance(result.content, list):
+                        content_list = []
+                        for item in result.content:
+                            if hasattr(item, 'text'):
+                                content_list.append(item.text)
+                            elif hasattr(item, 'document'):
+                                doc = item.document
+                                if hasattr(doc, 'text'):
+                                    content_list.append(doc.text)
+                                elif isinstance(doc, dict):
+                                    content_list.append(doc.get('text', str(doc)))
+                                else:
+                                    content_list.append(str(doc))
+                            elif isinstance(item, dict):
+                                if 'text' in item:
+                                    content_list.append(item['text'])
+                                else:
+                                    content_list.append(str(item))
+                            else:
+                                content_list.append(str(item))
+                        return {"content": content_list}
+                    else:
+                        if hasattr(result.content, 'text'):
+                            return {"content": [result.content.text]}
+                        else:
+                            return {"content": [str(result.content)]}
+
+                return {"result": "Tool executed successfully"}
+    except ImportError as e:
+        return {"error": f"MCP SDK not installed. Run: pip install mcp. Error: {e}"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
-def list_tools():
-    """List available Qdrant tools."""
-    # First initialize
-    init_result = initialize()
-    if "error" in init_result:
-        return init_result
-
-    return mcp_request("tools/list", {}, request_id=2)
-
-
-def call_tool(tool_name: str, arguments: dict):
-    """Call a Qdrant tool."""
-    return mcp_request("tools/call", {
-        "name": tool_name,
-        "arguments": arguments
-    }, request_id=3)
-
-
-def search(query: str, collection: str = None, limit: int = 5):
+async def search_async(query: str, collection: str = None, limit: int = 5):
     """
     Semantic search in Qdrant.
 
@@ -104,8 +128,8 @@ def search(query: str, collection: str = None, limit: int = 5):
     """
     collection = collection or DEFAULT_COLLECTION
 
-    # Try qdrant-find tool (common name in Qdrant MCP)
-    result = call_tool("qdrant-find", {
+    # Try qdrant-find tool first
+    result = await call_tool_async("qdrant-find", {
         "collection_name": collection,
         "query": query,
         "limit": limit
@@ -113,7 +137,7 @@ def search(query: str, collection: str = None, limit: int = 5):
 
     # If qdrant-find doesn't work, try search_points
     if "error" in result:
-        result = call_tool("search_points", {
+        result = await call_tool_async("search_points", {
             "collection_name": collection,
             "query": query,
             "limit": limit
@@ -125,31 +149,30 @@ def search(query: str, collection: str = None, limit: int = 5):
 def format_result(result: dict) -> str:
     """Format result for output."""
     if "error" in result:
-        error = result["error"]
-        if isinstance(error, dict):
-            return f"Error: {error.get('message', error)}"
-        return f"Error: {error}"
+        return f"Error: {result['error']}"
 
-    if "result" in result:
-        data = result["result"]
-        if isinstance(data, dict) and "content" in data:
-            content = data["content"]
-            if isinstance(content, list):
-                texts = []
-                for item in content:
-                    if isinstance(item, dict) and "text" in item:
-                        texts.append(item["text"])
-                    else:
-                        texts.append(str(item))
-                return "\n".join(texts)
-            return str(content)
-        return json.dumps(data, indent=2)
+    if "content" in result:
+        content = result["content"]
+        if isinstance(content, list):
+            return "\n".join(str(item) for item in content)
+        return str(content)
+
+    if "tools" in result:
+        tools = result["tools"]
+        output = f"Available Qdrant tools ({len(tools)}):\n"
+        for tool in tools:
+            output += f"\n  {tool['name']}\n"
+            desc = tool.get('description', 'No description')
+            if len(desc) > 100:
+                desc = desc[:100] + "..."
+            output += f"    {desc}\n"
+        return output
 
     return json.dumps(result, indent=2)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Qdrant MCP Client")
+    parser = argparse.ArgumentParser(description="Qdrant MCP Client (SSE)")
 
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
@@ -170,30 +193,18 @@ def main():
     args = parser.parse_args()
 
     if args.command == "list-tools":
-        result = list_tools()
-        if "result" in result and "tools" in result["result"]:
-            tools = result["result"]["tools"]
-            print(f"Available Qdrant tools ({len(tools)}):\n")
-            for tool in tools:
-                print(f"  {tool['name']}")
-                desc = tool.get('description', 'No description')
-                # Truncate long descriptions
-                if len(desc) > 100:
-                    desc = desc[:100] + "..."
-                print(f"    {desc}")
-                print()
-        else:
-            print(format_result(result))
+        result = asyncio.run(list_tools_async())
+        print(format_result(result))
 
     elif args.command == "search":
-        result = search(args.query, args.collection, args.limit)
+        result = asyncio.run(search_async(args.query, args.collection, args.limit))
         print(format_result(result))
 
     elif args.command == "call":
         arguments = {}
         if args.args:
             arguments = json.loads(args.args)
-        result = call_tool(args.tool, arguments)
+        result = asyncio.run(call_tool_async(args.tool, arguments))
         print(format_result(result))
 
     else:
