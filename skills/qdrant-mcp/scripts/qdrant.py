@@ -120,28 +120,16 @@ async def search_async(query: str, collection: str = None, limit: int = 5):
 
     Args:
         query: Search query (natural language)
-        collection: Collection name (default: knowledge_base_v2)
-        limit: Number of results to return
+        collection: Collection name (not used - Qdrant MCP uses default collection)
+        limit: Number of results (not used - Qdrant MCP returns default limit)
 
     Returns:
         Search results
     """
-    collection = collection or DEFAULT_COLLECTION
-
-    # Try qdrant-find tool first
+    # qdrant-find only takes a 'query' parameter
     result = await call_tool_async("qdrant-find", {
-        "collection_name": collection,
-        "query": query,
-        "limit": limit
+        "query": query
     })
-
-    # If qdrant-find doesn't work, try search_points
-    if "error" in result:
-        result = await call_tool_async("search_points", {
-            "collection_name": collection,
-            "query": query,
-            "limit": limit
-        })
 
     return result
 

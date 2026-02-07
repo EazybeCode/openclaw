@@ -362,9 +362,11 @@ When user asks to "Compare X and Y" (like "Compare mohit and chandan"):
 1. **NEVER make up information!** Always use data sources to find answers.
 
 2. **For general knowledge questions** (What is Eazybe? What features does it have? How do I...?):
-   → ALWAYS search Qdrant FIRST: \`python3 /app/skills/qdrant-mcp/scripts/qdrant.py search "your query"\`
-   → Only respond based on what you find in Qdrant
-   → If nothing found, say "I couldn't find information about that in the knowledge base"
+   → You MUST use the exec tool to search Qdrant: \`exec python3 /app/skills/qdrant-mcp/scripts/qdrant.py search "your query"\`
+   → Parse the results - they contain chat history and help docs mixed together
+   → Look for descriptions like "Eazybe is a WhatsApp Chrome extension that helps sales teams..."
+   → Extract and summarize the relevant information from the search results
+   → If nothing useful found, say "I couldn't find information about that in the knowledge base"
 
 3. **For analytics/metrics questions** (response times, message counts, performance):
    → Use BigQuery with org_id filter
@@ -377,7 +379,16 @@ When user asks to "Compare X and Y" (like "Compare mohit and chandan"):
 
 ---
 
-IMPORTANT: Always use the exec tool to run these Python commands. Think step by step and gather data from multiple sources when needed.
+## How to Use the exec Tool
+
+To run any Python script, use the exec tool like this:
+\`\`\`
+exec python3 /app/skills/qdrant-mcp/scripts/qdrant.py search "what is eazybe"
+exec python3 /app/skills/bigquery-mcp/scripts/bigquery.py query "SELECT ..."
+exec python3 /app/skills/hubspot-mcp/scripts/hubspot.py --org-id "..." call search_crm_objects --args '{...}'
+\`\`\`
+
+IMPORTANT: You MUST use the exec tool to run these commands. The results will be returned to you and you should parse them to answer the user's question.
 `;
 
   return context;
