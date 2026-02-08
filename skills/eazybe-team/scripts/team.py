@@ -67,13 +67,52 @@ def fetch_team_members(org_id: str) -> list:
 
 
 def find_member_by_name(name: str, team_members: list) -> dict:
-    """Find team member by name (case-insensitive partial match)."""
-    name_lower = name.lower()
+    """
+    Find team member by name with smart matching.
+    Priority: exact match > first name match > partial match > fuzzy match
+    """
+    name_lower = name.lower().strip()
+    search_words = name_lower.split()
+
+    best_match = None
+    best_score = 0
+
     for member in team_members:
         member_name = member.get("name", "").lower()
-        if name_lower in member_name or member_name in name_lower:
+        member_words = member_name.split()
+        score = 0
+
+        # Exact match (highest priority)
+        if name_lower == member_name:
             return member
-    return None
+
+        # First word/name match (e.g., "mohit" matches "Mohit Eazybe")
+        if search_words[0] == member_words[0]:
+            score += 100
+        elif search_words[0] in member_words[0] or member_words[0] in search_words[0]:
+            score += 50
+
+        # Check if search term is contained in member name
+        if name_lower in member_name:
+            score += 30
+
+        # Word overlap scoring
+        for search_word in search_words:
+            for member_word in member_words:
+                if search_word == member_word:
+                    score += 20
+                elif search_word in member_word:
+                    score += 10
+                elif member_word in search_word:
+                    score += 5
+
+        # Update best match
+        if score > best_score:
+            best_score = score
+            best_match = member
+
+    # Return best match if score is above threshold
+    return best_match if best_score >= 10 else None
 
 
 def main():
