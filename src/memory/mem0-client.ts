@@ -177,19 +177,23 @@ export class Mem0Client {
 
         console.log(`[mem0] Search scope ${scopeLevel}: user_id=${scopeKey}`);
 
-        // Use V2 API for search
-        const result = await this.request<{ results: Mem0SearchResult[] }>(
+        // Use V2 API for search - Mem0 may return array directly OR { results: [...] }
+        const rawResult = await this.request<Mem0SearchResult[] | { results: Mem0SearchResult[] }>(
           "/memories/search/",
           "POST",
           payload,
           "v2",
         );
 
-        console.log(`[mem0] Scope ${scopeLevel} returned ${result.results?.length || 0} results`);
+        const results = Array.isArray(rawResult)
+          ? rawResult
+          : (rawResult as { results?: Mem0SearchResult[] }).results || [];
 
-        if (result.results) {
+        console.log(`[mem0] Scope ${scopeLevel} returned ${results.length} results`);
+
+        if (results.length > 0) {
           allResults.push(
-            ...result.results.map((r) => ({
+            ...results.map((r) => ({
               ...r,
               metadata: { ...r.metadata, scope_level: scopeLevel },
             })),
@@ -233,14 +237,17 @@ export class Mem0Client {
         },
       };
 
-      const result = await this.request<{ results: Mem0SearchResult[] }>(
+      // Mem0 may return array directly OR { results: [...] }
+      const rawResult = await this.request<Mem0SearchResult[] | { results: Mem0SearchResult[] }>(
         "/memories/search/",
         "POST",
         payload,
         "v2",
       );
 
-      const results = result.results || [];
+      const results = Array.isArray(rawResult)
+        ? rawResult
+        : (rawResult as { results?: Mem0SearchResult[] }).results || [];
       console.log(`[mem0] Strategy 1 returned ${results.length} results`);
 
       for (const r of results) {
@@ -276,14 +283,17 @@ export class Mem0Client {
         },
       };
 
-      const result = await this.request<{ results: Mem0SearchResult[] }>(
+      // Mem0 may return array directly OR { results: [...] }
+      const rawResult = await this.request<Mem0SearchResult[] | { results: Mem0SearchResult[] }>(
         "/memories/search/",
         "POST",
         payload,
         "v2",
       );
 
-      const results = result.results || [];
+      const results = Array.isArray(rawResult)
+        ? rawResult
+        : (rawResult as { results?: Mem0SearchResult[] }).results || [];
       console.log(`[mem0] Strategy 2 returned ${results.length} results`);
 
       for (const r of results) {
@@ -313,14 +323,18 @@ export class Mem0Client {
         },
       };
 
-      const result = await this.request<{ results: Mem0SearchResult[] }>(
+      // Mem0 may return array directly OR { results: [...] }
+      const rawResult = await this.request<Mem0SearchResult[] | { results: Mem0SearchResult[] }>(
         "/memories/search/",
         "POST",
         payload,
         "v2",
       );
 
-      const results = result.results || [];
+      // Handle both response formats
+      const results = Array.isArray(rawResult)
+        ? rawResult
+        : (rawResult as { results?: Mem0SearchResult[] }).results || [];
       console.log(`[mem0] Strategy 3 returned ${results.length} total results`);
 
       for (const r of results.slice(0, 10)) {
