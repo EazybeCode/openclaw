@@ -29,13 +29,14 @@ const TOOLS = [
     function: {
       name: "query_bigquery",
       description:
-        "Query BigQuery for analytics data like response times, message counts, performance metrics",
+        "Query BigQuery analytics. TABLE: waba-454907.whatsapp_analytics.daily_performance_summary. COLUMNS: user_id, org_id, activity_date, agent_message_count, contact_message_count, avg_agent_response_time_seconds. ALWAYS use full table path and filter by org_id.",
       parameters: {
         type: "object",
         properties: {
           sql: {
             type: "string",
-            description: "The SQL query to execute against BigQuery",
+            description:
+              "SQL query using table waba-454907.whatsapp_analytics.daily_performance_summary. Must include org_id filter.",
           },
         },
         required: ["sql"],
@@ -68,14 +69,15 @@ const TOOLS = [
     type: "function" as const,
     function: {
       name: "get_team_member",
-      description: "Get team member info or find user_id from name",
+      description:
+        "Get team member info or find workspace_id from name. Use this FIRST before BigQuery when user mentions employee names. Returns workspace_id which is used as user_id in BigQuery.",
       parameters: {
         type: "object",
         properties: {
           action: {
             type: "string",
             enum: ["find", "list"],
-            description: "'find' to search by name, 'list' to get all members",
+            description: "'find' to search by name and get workspace_id, 'list' to get all members",
           },
           name: {
             type: "string",
@@ -340,18 +342,61 @@ function buildSystemPrompt(tenant: TenantContext): string {
 - Role: ${tenant.role}
 - Surface: ${tenant.surface}
 
-## Your Capabilities
-You have access to these tools:
-1. **query_bigquery** - Get analytics data (response times, message counts, performance)
-2. **search_hubspot** - Search CRM for deals, contacts, notes, meetings
-3. **get_team_member** - Find team members by name or list all
-4. **search_knowledge_base** - Search product documentation and past conversations
+## Your Tools
+
+### 1. query_bigquery - Analytics Data
+**Dataset**: \`waba-454907.whatsapp_analytics.daily_performance_summary\`
+**Columns**:
+- user_id (string) - This is the WORKSPACE_ID (employee identifier)
+- org_id (string) - Organization ID
+- activity_date (date) - Date of activity
+- agent_message_count (int) - Messages sent by agent
+- contact_message_count (int) - Messages received from contacts
+- avg_agent_response_time_seconds (float) - Average response time in seconds
+
+**IMPORTANT**: Always use full table path \`waba-454907.whatsapp_analytics.daily_performance_summary\`
+**IMPORTANT**: Always filter by org_id='${tenant.organizationId}'
+**IMPORTANT**: user_id column = workspace_id (use get_team_member to find workspace_id from name)
+
+**Example queries**:
+- Average response time: \`SELECT AVG(avg_agent_response_time_seconds) as avg_response FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}'\`
+- By employee: \`SELECT user_id as workspace_id, AVG(avg_agent_response_time_seconds) as avg_response, SUM(agent_message_count) as messages FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' GROUP BY user_id\`
+- Specific employee: \`... WHERE org_id='${tenant.organizationId}' AND user_id='<workspace_id>'\`
+- Date range: \`... WHERE org_id='${tenant.organizationId}' AND activity_date >= '2024-01-01'\`
+
+### 2. get_team_member - Find Workspace IDs from Names
+Use this FIRST when user mentions names like "Mohit", "Chandan", etc.
+- action: "find" + name: "mohit" → returns workspace_id (used as user_id in BigQuery)
+- action: "list" → returns all team members with their workspace_ids
+
+### 3. search_hubspot - CRM Data
+- action: "search_deals" → Find deals
+- action: "search_contacts" → Find contacts
+- action: "get_notes" → Get notes
+- action: "get_meetings" → Get meetings
+
+### 4. search_knowledge_base - Documentation
+Search product docs and past conversations.
+
+## Workflow for User Queries
+
+**For performance/analytics questions**:
+1. If names mentioned → get_team_member to find workspace_id first
+2. query_bigquery with correct table, org_id filter, and user_id=workspace_id
+3. Format results in a table
+
+**For CRM questions**:
+1. search_hubspot with appropriate action
+
+**For product questions**:
+1. search_knowledge_base
 
 ## Guidelines
-- Always use tools to get real data before answering
-- For comparisons (e.g., "compare A and B"), get data for both first
-- When searching for people, use get_team_member to find their user_id first
-- Be concise and data-driven in your responses
+- ALWAYS use the full BigQuery table path: waba-454907.whatsapp_analytics.daily_performance_summary
+- ALWAYS filter by org_id='${tenant.organizationId}'
+- For comparisons, get_team_member FIRST to resolve names to workspace_ids
+- In BigQuery, user_id column = workspace_id
+- Be concise and data-driven
 - Format data in tables when appropriate
 `;
 }
