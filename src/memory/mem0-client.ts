@@ -5,7 +5,9 @@
 import type { TenantContext, ScopeLevel } from "../tenant/index.js";
 import { createScopeKey, getAllScopeKeys } from "../tenant/index.js";
 
-const MEM0_API_BASE = "https://api.mem0.ai/v1";
+// Mem0 API endpoints - v1 for add, v2 for search (per documentation)
+const MEM0_API_V1 = "https://api.mem0.ai/v1";
+const MEM0_API_V2 = "https://api.mem0.ai/v2";
 
 export interface Mem0Config {
   apiKey: string;
@@ -67,12 +69,19 @@ export class Mem0Client {
     endpoint: string,
     method: "GET" | "POST" | "PUT" | "DELETE",
     body?: unknown,
+    apiVersion: "v1" | "v2" = "v1",
   ): Promise<T> {
-    const url = `${MEM0_API_BASE}${endpoint}`;
+    const baseUrl = apiVersion === "v2" ? MEM0_API_V2 : MEM0_API_V1;
+    const url = `${baseUrl}${endpoint}`;
     const headers: Record<string, string> = {
       Authorization: `Token ${this.apiKey}`,
       "Content-Type": "application/json",
     };
+
+    console.log(`[mem0] API ${method} ${url}`);
+    if (body) {
+      console.log(`[mem0] Request body: ${JSON.stringify(body).substring(0, 500)}`);
+    }
 
     const response = await fetch(url, {
       method,
@@ -80,12 +89,18 @@ export class Mem0Client {
       body: body ? JSON.stringify(body) : undefined,
     });
 
+    const responseText = await response.text();
+    console.log(`[mem0] Response ${response.status}: ${responseText.substring(0, 500)}`);
+
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Mem0 API error: ${response.status} - ${errorText}`);
+      throw new Error(`Mem0 API error: ${response.status} - ${responseText}`);
     }
 
-    return response.json() as Promise<T>;
+    try {
+      return JSON.parse(responseText) as T;
+    } catch {
+      return {} as T;
+    }
   }
 
   async addMemory(content: string, options: Mem0AddOptions): Promise<Mem0Memory[]> {
@@ -93,12 +108,19 @@ export class Mem0Client {
     const scopeKey = createScopeKey(tenant, scopeLevel);
     const agentId = this.orgId || "openclaw";
 
-    console.log(`[mem0] Add: user_id=${scopeKey}, agent_id=${agentId}, scope=${scopeLevel}`);
+    console.log(`[mem0] ========== ADD MEMORY ==========`);
+    console.log(`[mem0] Content: "${content.substring(0, 100)}..."`);
+    console.log(`[mem0] user_id: ${scopeKey}`);
+    console.log(`[mem0] agent_id: ${agentId}`);
+    console.log(`[mem0] scope: ${scopeLevel}`);
+    console.log(`[mem0] org: ${tenant.organizationId}`);
 
     const payload = {
       messages: [{ role: "user", content }],
       user_id: scopeKey,
       agent_id: agentId,
+      // Use sync mode for immediate confirmation (per Mem0 docs)
+      infer: true,
       metadata: {
         ...metadata,
         tenant_org: tenant.organizationId,
@@ -112,7 +134,19 @@ export class Mem0Client {
       },
     };
 
-    const result = await this.request<{ results: Mem0Memory[] }>("/memories/", "POST", payload);
+    const result = await this.request<{ results: Mem0Memory[] }>(
+      "/memories/",
+      "POST",
+      payload,
+      "v1",
+    );
+
+    console.log(`[mem0] Add result: ${result.results?.length || 0} memories created`);
+    if (result.results) {
+      for (const mem of result.results) {
+        console.log(`[mem0] - ID: ${mem.id}, Memory: "${mem.memory?.substring(0, 50)}..."`);
+      }
+    }
 
     return result.results || [];
   }
@@ -121,6 +155,10 @@ export class Mem0Client {
     const { tenant, scopeLevels, limit = 10 } = options;
     const scopesToSearch = scopeLevels || this.getDefaultScopeLevels(tenant);
     const allResults: Mem0SearchResult[] = [];
+
+    console.log(`[mem0] ========== SEARCH MEMORIES ==========`);
+    console.log(`[mem0] Query: "${query.substring(0, 50)}..."`);
+    console.log(`[mem0] Scopes to search: ${scopesToSearch.join(", ")}`);
 
     for (const scopeLevel of scopesToSearch) {
       try {
@@ -131,20 +169,20 @@ export class Mem0Client {
           query,
           user_id: scopeKey,
           agent_id: agentId,
-          limit: Math.ceil(limit / scopesToSearch.length),
+          top_k: Math.ceil(limit / scopesToSearch.length), // V2 uses top_k
         };
 
-        console.log(`[mem0] Search: user_id=${scopeKey}, agent_id=${agentId}, scope=${scopeLevel}`);
+        console.log(`[mem0] Search scope ${scopeLevel}: user_id=${scopeKey}`);
 
+        // Use V2 API for search
         const result = await this.request<{ results: Mem0SearchResult[] }>(
           "/memories/search/",
           "POST",
           payload,
+          "v2",
         );
 
-        console.log(
-          `[mem0] Search returned ${result.results?.length || 0} results for scope ${scopeLevel}`,
-        );
+        console.log(`[mem0] Scope ${scopeLevel} returned ${result.results?.length || 0} results`);
 
         if (result.results) {
           allResults.push(
@@ -159,57 +197,206 @@ export class Mem0Client {
       }
     }
 
+    console.log(`[mem0] Total results across all scopes: ${allResults.length}`);
     return allResults.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
   // Search for org-level learnings using metadata filters
+  // Uses V2 API with proper filter syntax per Mem0 documentation
   async searchLearningsByOrg(
     query: string,
     orgId: string,
     limit: number = 5,
   ): Promise<Mem0SearchResult[]> {
     const agentId = this.orgId || "openclaw";
+    const scopeKey = `org${orgId}`; // Match the format used when storing
 
-    // Use metadata filters to find learnings for this org
-    const payload = {
-      query,
-      agent_id: agentId,
-      limit,
-      filters: {
-        AND: [{ "metadata.type": "learning" }, { "metadata.tenant_org": orgId }],
-      },
-    };
+    console.log(`[mem0] ========== SEARCH LEARNINGS ==========`);
+    console.log(`[mem0] Query: "${query}"`);
+    console.log(`[mem0] Org ID: ${orgId}`);
+    console.log(`[mem0] Scope Key: ${scopeKey}`);
+    console.log(`[mem0] Agent ID: ${agentId}`);
 
-    console.log(`[mem0] Learning search: org=${orgId}, agent=${agentId}`);
-
+    // Strategy 1: Search by user_id (scope key) using V2 API
     try {
+      console.log(`[mem0] Strategy 1: V2 API with user_id filter`);
+
+      const payload = {
+        query,
+        user_id: scopeKey,
+        agent_id: agentId,
+        top_k: limit * 3, // V2 uses top_k not limit
+      };
+
       const result = await this.request<{ results: Mem0SearchResult[] }>(
         "/memories/search/",
         "POST",
         payload,
+        "v2",
       );
-      console.log(`[mem0] Learning search returned ${result.results?.length || 0} results`);
-      return result.results || [];
+
+      const results = result.results || [];
+      console.log(`[mem0] Strategy 1 returned ${results.length} results`);
+
+      // Log all results for debugging
+      for (const r of results) {
+        console.log(
+          `[mem0] Result: "${r.memory?.substring(0, 60)}..." score=${r.score} type=${r.metadata?.type} org=${r.metadata?.tenant_org}`,
+        );
+      }
+
+      // Filter for learnings
+      const learnings = results.filter((r) => r.metadata?.type === "learning");
+      if (learnings.length > 0) {
+        console.log(`[mem0] Found ${learnings.length} learnings`);
+        return learnings.slice(0, limit);
+      }
+
+      // If no learnings found but we have results, return those anyway
+      if (results.length > 0) {
+        console.log(`[mem0] No learnings metadata, returning all ${results.length} results`);
+        return results.slice(0, limit);
+      }
     } catch (err) {
-      console.warn(`[mem0] Learning search failed:`, err);
-      return [];
+      console.warn(`[mem0] Strategy 1 failed:`, err);
     }
+
+    // Strategy 2: Search with metadata filter using V2 API
+    try {
+      console.log(`[mem0] Strategy 2: V2 API with metadata AND filter`);
+
+      const payload = {
+        query,
+        agent_id: agentId,
+        top_k: limit * 3,
+        filters: {
+          AND: [{ "metadata.type": "learning" }, { "metadata.tenant_org": orgId }],
+        },
+      };
+
+      const result = await this.request<{ results: Mem0SearchResult[] }>(
+        "/memories/search/",
+        "POST",
+        payload,
+        "v2",
+      );
+
+      const results = result.results || [];
+      console.log(`[mem0] Strategy 2 returned ${results.length} results`);
+
+      for (const r of results) {
+        console.log(`[mem0] Result: "${r.memory?.substring(0, 60)}..." score=${r.score}`);
+      }
+
+      if (results.length > 0) {
+        return results.slice(0, limit);
+      }
+    } catch (err) {
+      console.warn(`[mem0] Strategy 2 failed:`, err);
+    }
+
+    // Strategy 3: Search without filters, filter client-side
+    try {
+      console.log(`[mem0] Strategy 3: V2 API without filters, client-side filtering`);
+
+      const payload = {
+        query,
+        agent_id: agentId,
+        top_k: 50, // Get more to filter from
+      };
+
+      const result = await this.request<{ results: Mem0SearchResult[] }>(
+        "/memories/search/",
+        "POST",
+        payload,
+        "v2",
+      );
+
+      const results = result.results || [];
+      console.log(`[mem0] Strategy 3 returned ${results.length} total results`);
+
+      // Log all for debugging
+      for (const r of results.slice(0, 10)) {
+        console.log(
+          `[mem0] Result: "${r.memory?.substring(0, 60)}..." type=${r.metadata?.type} org=${r.metadata?.tenant_org}`,
+        );
+      }
+
+      // Filter for learnings from this org
+      const filtered = results.filter(
+        (r) => r.metadata?.type === "learning" && r.metadata?.tenant_org === orgId,
+      );
+
+      if (filtered.length > 0) {
+        console.log(`[mem0] Found ${filtered.length} learnings after client-side filtering`);
+        return filtered.slice(0, limit);
+      }
+    } catch (err) {
+      console.warn(`[mem0] Strategy 3 failed:`, err);
+    }
+
+    // Strategy 4: Try V1 API as fallback
+    try {
+      console.log(`[mem0] Strategy 4: V1 API fallback`);
+
+      const payload = {
+        query,
+        user_id: scopeKey,
+        agent_id: agentId,
+        limit: limit * 3,
+      };
+
+      const result = await this.request<{ results: Mem0SearchResult[] }>(
+        "/memories/search/",
+        "POST",
+        payload,
+        "v1",
+      );
+
+      const results = result.results || [];
+      console.log(`[mem0] Strategy 4 (V1) returned ${results.length} results`);
+
+      for (const r of results) {
+        console.log(`[mem0] Result: "${r.memory?.substring(0, 60)}..." type=${r.metadata?.type}`);
+      }
+
+      if (results.length > 0) {
+        const learnings = results.filter((r) => r.metadata?.type === "learning");
+        return learnings.length > 0 ? learnings.slice(0, limit) : results.slice(0, limit);
+      }
+    } catch (err) {
+      console.warn(`[mem0] Strategy 4 failed:`, err);
+    }
+
+    console.log(`[mem0] All strategies exhausted, no learnings found`);
+    return [];
   }
 
   async getMemories(tenant: TenantContext, scopeLevel: ScopeLevel = "user"): Promise<Mem0Memory[]> {
     const scopeKey = createScopeKey(tenant, scopeLevel);
     const agentId = this.orgId || "openclaw";
 
+    console.log(`[mem0] ========== GET MEMORIES ==========`);
+    console.log(`[mem0] Scope: ${scopeLevel}`);
+    console.log(`[mem0] Scope Key: ${scopeKey}`);
+    console.log(`[mem0] Agent ID: ${agentId}`);
+
     // Try without agent_id filter first (Mem0 might not require it for GET)
     const urlWithoutAgent = `/memories/?user_id=${encodeURIComponent(scopeKey)}`;
     const urlWithAgent = `/memories/?user_id=${encodeURIComponent(scopeKey)}&agent_id=${encodeURIComponent(agentId)}`;
 
-    console.log(`[mem0] GET: Trying ${urlWithoutAgent}`);
-
     try {
-      const result = await this.request<{ results: Mem0Memory[] }>(urlWithoutAgent, "GET");
+      const result = await this.request<{ results: Mem0Memory[] }>(
+        urlWithoutAgent,
+        "GET",
+        undefined,
+        "v1",
+      );
       console.log(`[mem0] GET (no agent filter): ${result.results?.length || 0} results`);
       if (result.results && result.results.length > 0) {
+        for (const mem of result.results.slice(0, 5)) {
+          console.log(`[mem0] - "${mem.memory?.substring(0, 50)}..." type=${mem.metadata?.type}`);
+        }
         return result.results;
       }
     } catch (err) {
@@ -217,8 +404,18 @@ export class Mem0Client {
     }
 
     // Fallback to with agent_id
-    const result = await this.request<{ results: Mem0Memory[] }>(urlWithAgent, "GET");
+    const result = await this.request<{ results: Mem0Memory[] }>(
+      urlWithAgent,
+      "GET",
+      undefined,
+      "v1",
+    );
     console.log(`[mem0] GET (with agent filter): ${result.results?.length || 0} results`);
+    if (result.results) {
+      for (const mem of result.results.slice(0, 5)) {
+        console.log(`[mem0] - "${mem.memory?.substring(0, 50)}..." type=${mem.metadata?.type}`);
+      }
+    }
     return result.results || [];
   }
 
@@ -318,15 +515,26 @@ export async function storeLearning(
   lesson: string,
   tenant: TenantContext,
 ): Promise<boolean> {
+  console.log(`[learning] ========== STORE LEARNING ==========`);
+  console.log(`[learning] Trigger: "${trigger}"`);
+  console.log(`[learning] Lesson: "${lesson}"`);
+  console.log(`[learning] Org: ${tenant.organizationId}`);
+  console.log(`[learning] Workspace: ${tenant.workspaceId}`);
+  console.log(`[learning] User: ${tenant.userId}`);
+
   const client = getMem0Client();
   if (!client) {
+    console.log(`[learning] ERROR: No Mem0 client available`);
     return false;
   }
 
   try {
     // Store learning at organization level
-    // Format as a user preference/fact that Mem0 will extract
-    const content = `User prefers to ${lesson} when looking for ${trigger}. This is their standard workflow.`;
+    // Format as a clear preference that Mem0 AI can extract as a fact
+    const content = `Important: When searching for ${trigger}, always ${lesson}. This is the preferred workflow.`;
+
+    console.log(`[learning] Content to store: "${content}"`);
+
     const result = await client.addMemory(content, {
       tenant,
       scopeLevel: "organization",
@@ -337,25 +545,23 @@ export async function storeLearning(
         learned_at: new Date().toISOString(),
       },
     });
-    console.log(`[learning] Stored: "${trigger}" → "${lesson}" for org ${tenant.organizationId}`);
-    console.log(`[learning] Mem0 response:`, JSON.stringify(result).substring(0, 500));
 
-    // Debug: List all memories for this org scope to verify storage
-    try {
-      const orgMemories = await client.getMemories(tenant, "organization");
-      console.log(`[learning] DEBUG: Found ${orgMemories.length} memories at org level`);
-      for (const mem of orgMemories.slice(0, 5)) {
-        console.log(
-          `[learning] DEBUG: - ${mem.memory?.substring(0, 80)}... (user_id: ${mem.user_id})`,
-        );
+    console.log(`[learning] Store result: ${result.length} memories created`);
+
+    if (result.length > 0) {
+      console.log(`[learning] SUCCESS: Learning stored`);
+      for (const mem of result) {
+        console.log(`[learning] - ID: ${mem.id}`);
+        console.log(`[learning] - Memory: "${mem.memory}"`);
+        console.log(`[learning] - user_id: ${mem.user_id}`);
       }
-    } catch (debugErr) {
-      console.log(`[learning] DEBUG: Failed to list org memories:`, debugErr);
+    } else {
+      console.log(`[learning] NOTE: Empty result (async processing), memory may still be stored`);
     }
 
     return true;
   } catch (err) {
-    console.error("[learning] Failed to store learning:", err);
+    console.error("[learning] ERROR: Failed to store learning:", err);
     return false;
   }
 }
@@ -369,35 +575,41 @@ export async function getLearnings(
   tenant: TenantContext,
   limit: number = 5,
 ): Promise<string[]> {
+  console.log(`[learning] ========== GET LEARNINGS ==========`);
+  console.log(`[learning] Query: "${query.substring(0, 100)}..."`);
+  console.log(`[learning] Org: ${tenant.organizationId}`);
+  console.log(`[learning] Limit: ${limit}`);
+
   const client = getMem0Client();
   if (!client) {
-    console.log(`[learning] No Mem0 client available`);
+    console.log(`[learning] ERROR: No Mem0 client available`);
     return [];
   }
 
   try {
-    console.log(`[learning] Searching for learnings (org: ${tenant.organizationId})`);
-
     // Use metadata filter search for org-level learnings
     const results = await client.searchLearningsByOrg(query, tenant.organizationId, limit);
 
+    console.log(`[learning] Search returned ${results.length} results`);
+
     // Extract lessons from results
-    const learnings = results
-      .filter((r) => r.metadata?.type === "learning")
-      .map((r) => {
-        const lesson = r.metadata?.lesson;
-        return typeof lesson === "string" ? lesson : r.memory;
-      });
+    // If metadata has lesson, use that; otherwise use the memory text
+    const learnings = results.map((r) => {
+      const lesson = r.metadata?.lesson;
+      const learning = typeof lesson === "string" ? lesson : r.memory;
+      console.log(`[learning] Extracted: "${learning}"`);
+      return learning;
+    });
 
     if (learnings.length > 0) {
-      console.log(`[learning] Found ${learnings.length} learnings to apply`);
+      console.log(`[learning] SUCCESS: Found ${learnings.length} learnings to apply`);
     } else {
       console.log(`[learning] No learnings found for org ${tenant.organizationId}`);
     }
 
     return learnings;
   } catch (err) {
-    console.error("[learning] Failed to retrieve learnings:", err);
+    console.error("[learning] ERROR: Failed to retrieve learnings:", err);
     return [];
   }
 }

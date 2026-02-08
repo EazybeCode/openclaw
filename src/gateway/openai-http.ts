@@ -623,13 +623,23 @@ export async function handleOpenAiHttpRequest(
 
       // Route ALL tenant queries to REV AGENT for planning
       if (hasTenant && tenantValidation.ok) {
+        console.log(`[learning] ========== LEARNING FLOW START ==========`);
+        console.log(`[learning] Query: "${prompt.message.substring(0, 100)}..."`);
+        console.log(`[learning] Org: ${tenant.organizationId}`);
+
         // SELF-IMPROVEMENT: Retrieve learnings and enrich query
         let enrichedMessage = prompt.message;
         try {
+          console.log(`[learning] Calling getLearnings...`);
           const learnings = await getLearnings(prompt.message, tenant, 5);
+          console.log(`[learning] getLearnings returned ${learnings.length} learnings`);
+
           if (learnings.length > 0) {
             enrichedMessage = buildEnrichedQuery(prompt.message, learnings);
             console.log(`[learning] Applied ${learnings.length} learnings to query`);
+            console.log(`[learning] Enriched query:\n${enrichedMessage.substring(0, 300)}...`);
+          } else {
+            console.log(`[learning] No learnings found, using original query`);
           }
         } catch (err) {
           console.warn(`[learning] Failed to retrieve learnings:`, err);
@@ -675,26 +685,44 @@ export async function handleOpenAiHttpRequest(
 
         // SELF-IMPROVEMENT: Detect and store corrections
         // Extract raw last user message (not the formatted prompt.message which includes history)
+        console.log(`[learning] ========== CORRECTION DETECTION ==========`);
         const allMessages = asMessages(payload.messages);
         const lastUserMsg = allMessages.filter((m) => m.role === "user").pop();
         const rawLastUserMessage = lastUserMsg ? extractTextContent(lastUserMsg.content) : "";
 
+        console.log(`[learning] Raw last user message: "${rawLastUserMessage}"`);
+        console.log(`[learning] Total messages in conversation: ${allMessages.length}`);
+
         if (rawLastUserMessage) {
           const correction = detectCorrection(rawLastUserMessage, allMessages);
+          console.log(`[learning] Correction detected: ${correction.isCorrection}`);
+          if (correction.isCorrection) {
+            console.log(`[learning] Trigger: "${correction.trigger}"`);
+            console.log(`[learning] Lesson: "${correction.lesson}"`);
+          }
+
           if (correction.isCorrection && correction.trigger && correction.lesson) {
+            console.log(`[learning] Storing learning...`);
             storeLearning(correction.trigger, correction.lesson, tenant)
               .then((stored) => {
                 if (stored) {
                   console.log(
-                    `[learning] Stored correction: "${correction.trigger}" → "${correction.lesson}"`,
+                    `[learning] SUCCESS: Stored correction: "${correction.trigger}" → "${correction.lesson}"`,
                   );
+                } else {
+                  console.log(`[learning] FAILED: Could not store correction`);
                 }
               })
               .catch((err) => {
-                console.warn(`[learning] Failed to store correction:`, err);
+                console.warn(`[learning] ERROR: Failed to store correction:`, err);
               });
+          } else {
+            console.log(`[learning] No correction detected in this message`);
           }
+        } else {
+          console.log(`[learning] No raw user message found`);
         }
+        console.log(`[learning] ========== LEARNING FLOW END ==========`);
       } else {
         // No tenant = direct OpenClaw
         const result = await agentCommand(
