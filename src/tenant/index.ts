@@ -132,9 +132,8 @@ export function createScopeKey(
 ): string {
   switch (level) {
     case "organization":
-      // Use user-like format for org-level to ensure Mem0 compatibility
-      // Format: user:{orgId}:_org makes it look like a user but unique for org
-      return `user:${tenant.organizationId}:_org`;
+      // Use simple format without colons for Mem0 compatibility
+      return `org${tenant.organizationId}`;
     case "workspace":
       return `ws:${tenant.organizationId}:${tenant.workspaceId}`;
     case "team":

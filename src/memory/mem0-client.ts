@@ -276,7 +276,9 @@ export async function storeLearning(
 
   try {
     // Store at organization level so all users benefit
-    const result = await client.addMemory(`When user mentions "${trigger}": ${lesson}`, {
+    // Use fact-like format for better Mem0 extraction
+    const content = `Important organizational knowledge: For queries about ${trigger}, the correct approach is to ${lesson}. This is a learned behavior from user feedback.`;
+    const result = await client.addMemory(content, {
       tenant,
       scopeLevel: "organization",
       metadata: {
