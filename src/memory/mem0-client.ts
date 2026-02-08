@@ -627,20 +627,24 @@ export async function storeMemory(
 
 /**
  * Learning scope levels for multi-tenant storage
+ * - workspace: Personal learnings for specific workspace (employee)
+ * - team: Team learnings (manager)
+ * - organization: Shared learnings for all (admin)
  */
-export type LearningScopeLevel = "user" | "organization";
+export type LearningScopeLevel = "workspace" | "team" | "organization";
 
 /**
  * Store a learning from user correction
- * Supports two-level multi-tenancy:
- * - "user" level: Personal learnings for specific user in workspace
+ * Supports multi-level multi-tenancy based on workspace_id:
+ * - "workspace" level: Personal learnings for specific workspace
+ * - "team" level: Team learnings for all team members
  * - "organization" level: Shared learnings for all users in org
  */
 export async function storeLearning(
   trigger: string,
   lesson: string,
   tenant: TenantContext,
-  scopeLevel: LearningScopeLevel = "user", // Default to user-level
+  scopeLevel: LearningScopeLevel = "workspace", // Default to workspace-level
 ): Promise<boolean> {
   console.log(`[learning] ========== STORE LEARNING ==========`);
   console.log(`[learning] Trigger: "${trigger}"`);
@@ -648,7 +652,8 @@ export async function storeLearning(
   console.log(`[learning] Scope Level: ${scopeLevel}`);
   console.log(`[learning] Org: ${tenant.organizationId}`);
   console.log(`[learning] Workspace: ${tenant.workspaceId}`);
-  console.log(`[learning] User: ${tenant.userId}`);
+  console.log(`[learning] Team: ${tenant.teamId}`);
+  console.log(`[learning] Role: ${tenant.role}`);
 
   const client = getMem0Client();
   if (!client) {
@@ -662,20 +667,33 @@ export async function storeLearning(
 
     console.log(`[learning] Content to store: "${content}"`);
 
-    // Create scope key based on level
-    const scopeKey =
-      scopeLevel === "user"
-        ? `user:${tenant.organizationId}:${tenant.workspaceId}:${tenant.userId}`
-        : `org${tenant.organizationId}`;
+    // Create scope key based on level (workspace_id is main identifier)
+    let scopeKey: string;
+    switch (scopeLevel) {
+      case "organization":
+        scopeKey = `org${tenant.organizationId}`;
+        break;
+      case "team":
+        scopeKey = `team:${tenant.organizationId}:${tenant.teamId}`;
+        break;
+      case "workspace":
+      default:
+        scopeKey = `ws:${tenant.organizationId}:${tenant.workspaceId}`;
+        break;
+    }
 
     console.log(`[learning] Scope Key: ${scopeKey}`);
 
+    // Map learning scope to memory scope
+    const memoryScopeLevel: ScopeLevel =
+      scopeLevel === "organization" ? "organization" : scopeLevel === "team" ? "team" : "workspace";
+
     const result = await client.addMemory(content, {
       tenant,
-      scopeLevel: scopeLevel === "user" ? "user" : "organization",
+      scopeLevel: memoryScopeLevel,
       metadata: {
         type: "learning",
-        learning_scope: scopeLevel, // "user" or "organization"
+        learning_scope: scopeLevel, // "workspace", "team", or "organization"
         trigger: trigger.toLowerCase(),
         lesson,
         learned_at: new Date().toISOString(),
@@ -734,6 +752,7 @@ export async function getLearnings(
 
   try {
     // Role-based learning retrieval
+    // workspace_id is the main identifier for employees
     switch (tenant.role) {
       case "admin":
         // Admin: Get ALL org learnings (everyone's learnings)
@@ -751,23 +770,23 @@ export async function getLearnings(
         break;
 
       case "manager":
-        // Manager: Get team-based learnings + own learnings
+        // Manager: Get team-based learnings (by team_id)
         console.log(`[learning] MANAGER: Searching TEAM learnings...`);
 
-        // 1. Own learnings first
-        const managerScopeKey = `user:${tenant.organizationId}:${tenant.workspaceId}:${tenant.userId}`;
+        // 1. Own workspace learnings first
+        const managerWsScopeKey = `ws:${tenant.organizationId}:${tenant.workspaceId}`;
         await searchAndCollectLearnings(
           client,
           query,
-          managerScopeKey,
+          managerWsScopeKey,
           tenant.organizationId,
           Math.ceil(limit / 2),
-          "SELF",
+          "SELF-WS",
           allLearnings,
           seenLessons,
         );
 
-        // 2. Team learnings
+        // 2. Team learnings (all workspaces in the team)
         const teamScopeKey = `team:${tenant.organizationId}:${tenant.teamId}`;
         await searchAndCollectLearnings(
           client,
@@ -783,16 +802,16 @@ export async function getLearnings(
 
       case "employee":
       default:
-        // Employee: Get workspace-based learnings (personal only)
-        console.log(`[learning] EMPLOYEE: Searching PERSONAL learnings...`);
-        const userScopeKey = `user:${tenant.organizationId}:${tenant.workspaceId}:${tenant.userId}`;
+        // Employee: Get workspace-based learnings only (workspace_id is main identifier)
+        console.log(`[learning] EMPLOYEE: Searching WORKSPACE learnings...`);
+        const wsScopeKey = `ws:${tenant.organizationId}:${tenant.workspaceId}`;
         await searchAndCollectLearnings(
           client,
           query,
-          userScopeKey,
+          wsScopeKey,
           tenant.organizationId,
           limit,
-          "PERSONAL",
+          "WORKSPACE",
           allLearnings,
           seenLessons,
         );

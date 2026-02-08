@@ -703,14 +703,26 @@ export async function handleOpenAiHttpRequest(
           }
 
           if (correction.isCorrection && correction.trigger && correction.lesson) {
-            console.log(`[learning] Storing learning at USER level...`);
-            // Store at user level by default (personal learning)
-            // Can be promoted to org level later if needed
-            storeLearning(correction.trigger, correction.lesson, tenant, "user")
+            // Determine storage scope based on role:
+            // - admin: store at org level (benefits everyone)
+            // - manager: store at team level (benefits team)
+            // - employee: store at workspace level (personal)
+            const storageScope =
+              tenant.role === "admin"
+                ? "organization"
+                : tenant.role === "manager"
+                  ? "team"
+                  : "workspace";
+
+            console.log(
+              `[learning] Storing learning at ${storageScope.toUpperCase()} level (role: ${tenant.role})...`,
+            );
+
+            storeLearning(correction.trigger, correction.lesson, tenant, storageScope)
               .then((stored) => {
                 if (stored) {
                   console.log(
-                    `[learning] SUCCESS: Stored USER correction: "${correction.trigger}" → "${correction.lesson}"`,
+                    `[learning] SUCCESS: Stored ${storageScope.toUpperCase()} correction: "${correction.trigger}" → "${correction.lesson}"`,
                   );
                 } else {
                   console.log(`[learning] FAILED: Could not store correction`);
