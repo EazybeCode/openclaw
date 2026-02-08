@@ -201,7 +201,7 @@ async function executeTool(
           tenant.workspaceId,
           "call",
           `hubspot_${action}`,
-          ...(query ? [query] : []),
+          ...(query ? ["--query", query] : []),
         ]);
         console.log(`[omnis] HubSpot result: ${result.substring(0, 200)}...`);
         return result;
