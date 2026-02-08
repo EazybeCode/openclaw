@@ -91,11 +91,14 @@ export class Mem0Client {
   async addMemory(content: string, options: Mem0AddOptions): Promise<Mem0Memory[]> {
     const { tenant, scopeLevel = "user", metadata = {} } = options;
     const scopeKey = createScopeKey(tenant, scopeLevel);
+    const agentId = this.orgId || "openclaw";
+
+    console.log(`[mem0] Add: user_id=${scopeKey}, agent_id=${agentId}, scope=${scopeLevel}`);
 
     const payload = {
       messages: [{ role: "user", content }],
       user_id: scopeKey,
-      agent_id: this.orgId || "openclaw",
+      agent_id: agentId,
       metadata: {
         ...metadata,
         tenant_org: tenant.organizationId,
@@ -122,18 +125,25 @@ export class Mem0Client {
     for (const scopeLevel of scopesToSearch) {
       try {
         const scopeKey = createScopeKey(tenant, scopeLevel);
+        const agentId = this.orgId || "openclaw";
 
         const payload = {
           query,
           user_id: scopeKey,
-          agent_id: this.orgId || "openclaw",
+          agent_id: agentId,
           limit: Math.ceil(limit / scopesToSearch.length),
         };
+
+        console.log(`[mem0] Search: user_id=${scopeKey}, agent_id=${agentId}, scope=${scopeLevel}`);
 
         const result = await this.request<{ results: Mem0SearchResult[] }>(
           "/memories/search/",
           "POST",
           payload,
+        );
+
+        console.log(
+          `[mem0] Search returned ${result.results?.length || 0} results for scope ${scopeLevel}`,
         );
 
         if (result.results) {
