@@ -165,11 +165,14 @@ export class Mem0Client {
         const scopeKey = createScopeKey(tenant, scopeLevel);
         const agentId = this.orgId || "openclaw";
 
+        // V2 API requires filters object - user_id and agent_id go inside filters
         const payload = {
           query,
-          user_id: scopeKey,
-          agent_id: agentId,
-          top_k: Math.ceil(limit / scopesToSearch.length), // V2 uses top_k
+          top_k: Math.ceil(limit / scopesToSearch.length),
+          filters: {
+            user_id: scopeKey,
+            agent_id: agentId,
+          },
         };
 
         console.log(`[mem0] Search scope ${scopeLevel}: user_id=${scopeKey}`);
@@ -202,7 +205,7 @@ export class Mem0Client {
   }
 
   // Search for org-level learnings using metadata filters
-  // Uses V2 API with proper filter syntax per Mem0 documentation
+  // V2 API REQUIRES filters object - user_id/agent_id go inside filters
   async searchLearningsByOrg(
     query: string,
     orgId: string,
@@ -217,15 +220,17 @@ export class Mem0Client {
     console.log(`[mem0] Scope Key: ${scopeKey}`);
     console.log(`[mem0] Agent ID: ${agentId}`);
 
-    // Strategy 1: Search by user_id (scope key) using V2 API
+    // Strategy 1: V2 API with user_id and agent_id in filters
     try {
-      console.log(`[mem0] Strategy 1: V2 API with user_id filter`);
+      console.log(`[mem0] Strategy 1: V2 API with filters object`);
 
       const payload = {
         query,
-        user_id: scopeKey,
-        agent_id: agentId,
-        top_k: limit * 3, // V2 uses top_k not limit
+        top_k: limit * 3,
+        filters: {
+          user_id: scopeKey,
+          agent_id: agentId,
+        },
       };
 
       const result = await this.request<{ results: Mem0SearchResult[] }>(
@@ -238,10 +243,9 @@ export class Mem0Client {
       const results = result.results || [];
       console.log(`[mem0] Strategy 1 returned ${results.length} results`);
 
-      // Log all results for debugging
       for (const r of results) {
         console.log(
-          `[mem0] Result: "${r.memory?.substring(0, 60)}..." score=${r.score} type=${r.metadata?.type} org=${r.metadata?.tenant_org}`,
+          `[mem0] Result: "${r.memory?.substring(0, 60)}..." score=${r.score} type=${r.metadata?.type}`,
         );
       }
 
@@ -252,7 +256,6 @@ export class Mem0Client {
         return learnings.slice(0, limit);
       }
 
-      // If no learnings found but we have results, return those anyway
       if (results.length > 0) {
         console.log(`[mem0] No learnings metadata, returning all ${results.length} results`);
         return results.slice(0, limit);
@@ -261,16 +264,15 @@ export class Mem0Client {
       console.warn(`[mem0] Strategy 1 failed:`, err);
     }
 
-    // Strategy 2: Search with metadata filter using V2 API
+    // Strategy 2: V2 API with AND filter for user_id and agent_id
     try {
-      console.log(`[mem0] Strategy 2: V2 API with metadata AND filter`);
+      console.log(`[mem0] Strategy 2: V2 API with AND filter`);
 
       const payload = {
         query,
-        agent_id: agentId,
         top_k: limit * 3,
         filters: {
-          AND: [{ "metadata.type": "learning" }, { "metadata.tenant_org": orgId }],
+          AND: [{ user_id: scopeKey }, { agent_id: agentId }],
         },
       };
 
@@ -288,6 +290,10 @@ export class Mem0Client {
         console.log(`[mem0] Result: "${r.memory?.substring(0, 60)}..." score=${r.score}`);
       }
 
+      const learnings = results.filter((r) => r.metadata?.type === "learning");
+      if (learnings.length > 0) {
+        return learnings.slice(0, limit);
+      }
       if (results.length > 0) {
         return results.slice(0, limit);
       }
@@ -295,14 +301,16 @@ export class Mem0Client {
       console.warn(`[mem0] Strategy 2 failed:`, err);
     }
 
-    // Strategy 3: Search without filters, filter client-side
+    // Strategy 3: V2 API with agent_id only, client-side user filtering
     try {
-      console.log(`[mem0] Strategy 3: V2 API without filters, client-side filtering`);
+      console.log(`[mem0] Strategy 3: V2 API with agent_id filter, client-side filtering`);
 
       const payload = {
         query,
-        agent_id: agentId,
-        top_k: 50, // Get more to filter from
+        top_k: 50,
+        filters: {
+          agent_id: agentId,
+        },
       };
 
       const result = await this.request<{ results: Mem0SearchResult[] }>(
@@ -315,7 +323,6 @@ export class Mem0Client {
       const results = result.results || [];
       console.log(`[mem0] Strategy 3 returned ${results.length} total results`);
 
-      // Log all for debugging
       for (const r of results.slice(0, 10)) {
         console.log(
           `[mem0] Result: "${r.memory?.substring(0, 60)}..." type=${r.metadata?.type} org=${r.metadata?.tenant_org}`,
@@ -331,11 +338,18 @@ export class Mem0Client {
         console.log(`[mem0] Found ${filtered.length} learnings after client-side filtering`);
         return filtered.slice(0, limit);
       }
+
+      // Also check for any results matching this org
+      const orgResults = results.filter((r) => r.metadata?.tenant_org === orgId);
+      if (orgResults.length > 0) {
+        console.log(`[mem0] Found ${orgResults.length} org results after filtering`);
+        return orgResults.slice(0, limit);
+      }
     } catch (err) {
       console.warn(`[mem0] Strategy 3 failed:`, err);
     }
 
-    // Strategy 4: Try V1 API as fallback
+    // Strategy 4: V1 API fallback (doesn't require filters object)
     try {
       console.log(`[mem0] Strategy 4: V1 API fallback`);
 
