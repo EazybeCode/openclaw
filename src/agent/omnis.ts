@@ -46,22 +46,57 @@ const TOOLS = [
   {
     type: "function" as const,
     function: {
-      name: "search_hubspot",
-      description: "Search HubSpot CRM for deals, contacts, notes, meetings",
+      name: "search_crm_objects",
+      description:
+        "Search HubSpot CRM objects (deals, contacts, companies, tickets). This is the main HubSpot tool. Use objectType to specify what to search. For filtering by owner, use filterGroups with hubspot_owner_id property.",
       parameters: {
         type: "object",
         properties: {
-          action: {
+          objectType: {
             type: "string",
-            enum: ["search_deals", "search_contacts", "get_notes", "get_meetings"],
-            description: "The HubSpot action to perform",
+            enum: ["deals", "contacts", "companies", "tickets"],
+            description: "Type of CRM object to search",
           },
           query: {
             type: "string",
-            description: "Optional search query or filter",
+            description: "Optional text search query",
+          },
+          filterGroups: {
+            type: "array",
+            description:
+              'Optional filter groups for advanced filtering. Example: [{"filters":[{"propertyName":"hubspot_owner_id","operator":"EQ","value":"123"}]}]',
+            items: { type: "object" },
+          },
+          properties: {
+            type: "array",
+            description:
+              'Optional list of properties to return. Example for deals: ["dealname","amount","dealstage","closedate","createdate","pipeline"]',
+            items: { type: "string" },
+          },
+          limit: {
+            type: "number",
+            description: "Max results to return (default 10)",
           },
         },
-        required: ["action"],
+        required: ["objectType"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "search_owners",
+      description:
+        "Search HubSpot owners/sales reps by name. Returns owner IDs that can be used with search_crm_objects filterGroups to find their deals/contacts.",
+      parameters: {
+        type: "object",
+        properties: {
+          searchQuery: {
+            type: "string",
+            description: "Name of the owner/rep to search for",
+          },
+        },
+        required: ["searchQuery"],
       },
     },
   },
@@ -191,19 +226,46 @@ async function executeTool(
         return result;
       }
 
-      case "search_hubspot": {
-        const action = args.action as string;
-        const query = (args.query as string) || "";
+      case "search_crm_objects": {
+        // HubSpot MCP tool: search_crm_objects
+        // Pass full arguments as JSON via --args flag
+        const hubspotArgs: Record<string, unknown> = {};
+        if (args.objectType) hubspotArgs.objectType = args.objectType;
+        if (args.query) hubspotArgs.query = args.query;
+        if (args.filterGroups) hubspotArgs.filterGroups = args.filterGroups;
+        if (args.properties) hubspotArgs.properties = args.properties;
+        if (args.limit) hubspotArgs.limit = args.limit;
+
         const result = await executePythonTool("/app/skills/hubspot-mcp/scripts/hubspot.py", [
           "--org-id",
           tenant.organizationId,
           "--workspace-id",
           tenant.workspaceId,
           "call",
-          `hubspot_${action}`,
-          ...(query ? ["--query", query] : []),
+          "search_crm_objects",
+          "--args",
+          JSON.stringify(hubspotArgs),
         ]);
-        console.log(`[omnis] HubSpot result: ${result.substring(0, 200)}...`);
+        console.log(`[omnis] HubSpot search_crm_objects result: ${result.substring(0, 200)}...`);
+        return result;
+      }
+
+      case "search_owners": {
+        // HubSpot MCP tool: search_owners
+        const searchQuery = (args.searchQuery as string) || "";
+        const hubspotArgs = { searchQuery };
+
+        const result = await executePythonTool("/app/skills/hubspot-mcp/scripts/hubspot.py", [
+          "--org-id",
+          tenant.organizationId,
+          "--workspace-id",
+          tenant.workspaceId,
+          "call",
+          "search_owners",
+          "--args",
+          JSON.stringify(hubspotArgs),
+        ]);
+        console.log(`[omnis] HubSpot search_owners result: ${result.substring(0, 200)}...`);
         return result;
       }
 
@@ -395,13 +457,27 @@ Examples:
 - "find" + name: "chandan" → returns \`{"user_id": "1170365", "name": "Chandan modi", ...}\`
 - "list" → returns all 37 team members with their user_ids
 
-### 3. search_hubspot - CRM Data
-- action: "search_deals" → Find deals
-- action: "search_contacts" → Find contacts
-- action: "get_notes" → Get notes
-- action: "get_meetings" → Get meetings
+### 3. search_crm_objects - HubSpot CRM Data
+Search deals, contacts, companies, tickets in HubSpot.
 
-### 4. search_knowledge_base - Documentation
+**Parameters**:
+- objectType (required): "deals", "contacts", "companies", or "tickets"
+- query (optional): Text search
+- filterGroups (optional): Advanced filters (e.g., filter by owner)
+- properties (optional): Specific fields to return
+- limit (optional): Max results
+
+**Examples**:
+- Latest deals: \`search_crm_objects(objectType="deals", properties=["dealname","amount","dealstage","closedate","createdate","pipeline"], limit=5)\`
+- Search contacts: \`search_crm_objects(objectType="contacts", query="John")\`
+- Deals by owner: \`search_crm_objects(objectType="deals", filterGroups=[{"filters":[{"propertyName":"hubspot_owner_id","operator":"EQ","value":"456232774"}]}])\`
+
+### 4. search_owners - Find HubSpot Sales Reps
+Find owner/rep IDs by name. Use BEFORE search_crm_objects when filtering by rep.
+
+**Example**: \`search_owners(searchQuery="Mohit")\` → returns ownerId
+
+### 5. search_knowledge_base - Documentation
 Search product docs and past conversations.
 
 ## Workflow Examples
@@ -412,16 +488,22 @@ Search product docs and past conversations.
 3. query_bigquery: SELECT user_id, AVG(avg_agent_response_time_seconds), SUM(agent_message_count) FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' AND user_id IN ('14024', '1170365') GROUP BY user_id
 4. Format comparison table with names
 
+**"Give me last created deal"**:
+1. search_crm_objects(objectType="deals", properties=["dealname","amount","dealstage","closedate","createdate","pipeline"], limit=5)
+2. Find the most recent by createdate and present it
+
+**"Find deals for rep Mohit"**:
+1. search_owners(searchQuery="Mohit") → get ownerId
+2. search_crm_objects(objectType="deals", filterGroups=[{"filters":[{"propertyName":"hubspot_owner_id","operator":"EQ","value":"<ownerId>"}]}])
+
 **"What is the average response time?"**:
 1. query_bigquery: SELECT AVG(avg_agent_response_time_seconds) FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}'
-
-**"Find deals for customer X"**:
-1. search_hubspot(action="search_deals", query="X")
 
 ## Guidelines
 - ALWAYS use full table: waba-454907.whatsapp_analytics.daily_performance_summary
 - ALWAYS filter by org_id='${tenant.organizationId}'
-- For names → get_team_member FIRST to get user_id
+- For names → get_team_member FIRST to get user_id (for BigQuery)
+- For HubSpot rep filtering → search_owners FIRST to get ownerId
 - Be concise, use tables for data
 `;
 }
