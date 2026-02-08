@@ -164,12 +164,27 @@ export class Mem0Client {
 
   async getMemories(tenant: TenantContext, scopeLevel: ScopeLevel = "user"): Promise<Mem0Memory[]> {
     const scopeKey = createScopeKey(tenant, scopeLevel);
+    const agentId = this.orgId || "openclaw";
 
-    const result = await this.request<{ results: Mem0Memory[] }>(
-      `/memories/?user_id=${encodeURIComponent(scopeKey)}&agent_id=${encodeURIComponent(this.orgId || "openclaw")}`,
-      "GET",
-    );
+    // Try without agent_id filter first (Mem0 might not require it for GET)
+    const urlWithoutAgent = `/memories/?user_id=${encodeURIComponent(scopeKey)}`;
+    const urlWithAgent = `/memories/?user_id=${encodeURIComponent(scopeKey)}&agent_id=${encodeURIComponent(agentId)}`;
 
+    console.log(`[mem0] GET: Trying ${urlWithoutAgent}`);
+
+    try {
+      const result = await this.request<{ results: Mem0Memory[] }>(urlWithoutAgent, "GET");
+      console.log(`[mem0] GET (no agent filter): ${result.results?.length || 0} results`);
+      if (result.results && result.results.length > 0) {
+        return result.results;
+      }
+    } catch (err) {
+      console.log(`[mem0] GET without agent_id failed, trying with agent_id`);
+    }
+
+    // Fallback to with agent_id
+    const result = await this.request<{ results: Mem0Memory[] }>(urlWithAgent, "GET");
+    console.log(`[mem0] GET (with agent filter): ${result.results?.length || 0} results`);
     return result.results || [];
   }
 
