@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { buildHistoryContextFromEntries, type HistoryEntry } from "../auto-reply/reply/history.js";
 import { createDefaultDeps } from "../cli/deps.js";
@@ -83,77 +82,7 @@ async function callRevAgent(
   }
 }
 
-/**
- * Search Qdrant knowledge base for relevant information
- */
-async function searchQdrant(query: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      resolve(null);
-    }, 10000);
-
-    try {
-      const child = spawn("python3", ["/app/skills/qdrant-mcp/scripts/qdrant.py", "search", query]);
-
-      let stdout = "";
-      let stderr = "";
-
-      child.stdout.on("data", (data) => {
-        stdout += data.toString();
-      });
-
-      child.stderr.on("data", (data) => {
-        stderr += data.toString();
-      });
-
-      child.on("close", (code) => {
-        clearTimeout(timeout);
-        if (code === 0 && stdout.trim()) {
-          resolve(stdout.trim());
-        } else {
-          console.warn(`[qdrant] Search failed: ${stderr || "no output"}`);
-          resolve(null);
-        }
-      });
-
-      child.on("error", (err) => {
-        clearTimeout(timeout);
-        console.warn(`[qdrant] Spawn error: ${err.message}`);
-        resolve(null);
-      });
-    } catch (err) {
-      clearTimeout(timeout);
-      console.warn(`[qdrant] Error: ${err}`);
-      resolve(null);
-    }
-  });
-}
-
-/**
- * Check if the message should trigger a Qdrant knowledge base search.
- * Skip for analytics/comparison queries that should use BigQuery instead.
- */
-function shouldSearchKnowledgeBase(message: string): boolean {
-  const lowerMessage = message.toLowerCase();
-
-  // Skip Qdrant for analytics/metrics/comparison queries - these should use BigQuery
-  const analyticsPatterns = [
-    /compare\s+\w+\s+(and|vs|with)\s+\w+/i, // "compare X and Y"
-    /performance|metrics|analytics|stats/i,
-    /response\s*time|avg\s*response/i,
-    /message\s*count|total\s*messages/i,
-    /how\s+(many|much)|count|sum|average/i,
-    /top\s+\d+|best|worst|fastest|slowest/i,
-    /last\s+(week|month|day|\d+\s*days)/i,
-  ];
-
-  if (analyticsPatterns.some((p) => p.test(lowerMessage))) {
-    return false; // Don't search Qdrant for analytics queries
-  }
-
-  // Search Qdrant for general knowledge questions
-  return true;
-}
+// NOTE: Qdrant search removed - REV AGENT handles knowledge base search via MCP tools
 
 type OpenAiHttpOptions = {
   auth: ResolvedGatewayAuth;
@@ -587,23 +516,7 @@ export async function handleOpenAiHttpRequest(
       console.warn(`[openai-http] Mem0 error:`, err);
     }
 
-    // RAG: Search Qdrant knowledge base for relevant context
-    if (shouldSearchKnowledgeBase(prompt.message)) {
-      console.log(`[openai-http] Qdrant: Searching for "${prompt.message.substring(0, 50)}..."`);
-      try {
-        const qdrantResults = await searchQdrant(prompt.message);
-        if (qdrantResults) {
-          extraSystemPrompt =
-            extraSystemPrompt +
-            `\n\n## Knowledge Base Search Results\n\nThe following are REAL conversations and documentation from Eazybe. Extract relevant information to answer the user's question. These are authoritative sources - use them confidently:\n\n${qdrantResults}\n\n---\nBased on the above search results, synthesize a helpful answer. Do NOT say you couldn't find information if the results contain relevant data.`;
-          console.log(`[openai-http] Qdrant: Found ${qdrantResults.length} chars of results`);
-        } else {
-          console.log(`[openai-http] Qdrant: No results found`);
-        }
-      } catch (err) {
-        console.warn(`[openai-http] Qdrant error:`, err);
-      }
-    }
+    // NOTE: Qdrant search removed - REV AGENT handles this via MCP tools
   }
   if (!prompt.message) {
     sendJson(res, 400, {
