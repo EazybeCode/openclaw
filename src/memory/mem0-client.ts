@@ -276,7 +276,7 @@ export async function storeLearning(
 
   try {
     // Store at organization level so all users benefit
-    await client.addMemory(`When user mentions "${trigger}": ${lesson}`, {
+    const result = await client.addMemory(`When user mentions "${trigger}": ${lesson}`, {
       tenant,
       scopeLevel: "organization",
       metadata: {
@@ -287,6 +287,21 @@ export async function storeLearning(
       },
     });
     console.log(`[learning] Stored: "${trigger}" → "${lesson}" for org ${tenant.organizationId}`);
+    console.log(`[learning] Mem0 response:`, JSON.stringify(result).substring(0, 500));
+
+    // Debug: List all memories for this org scope to verify storage
+    try {
+      const orgMemories = await client.getMemories(tenant, "organization");
+      console.log(`[learning] DEBUG: Found ${orgMemories.length} memories at org level`);
+      for (const mem of orgMemories.slice(0, 5)) {
+        console.log(
+          `[learning] DEBUG: - ${mem.memory?.substring(0, 80)}... (user_id: ${mem.user_id})`,
+        );
+      }
+    } catch (debugErr) {
+      console.log(`[learning] DEBUG: Failed to list org memories:`, debugErr);
+    }
+
     return true;
   } catch (err) {
     console.error("[learning] Failed to store learning:", err);
@@ -312,6 +327,21 @@ export async function getLearnings(
   try {
     console.log(`[learning] Searching for learnings (org: ${tenant.organizationId})`);
 
+    // Debug: List all org-level memories directly (GET, not search)
+    try {
+      const allOrgMemories = await client.getMemories(tenant, "organization");
+      console.log(`[learning] DEBUG GET: Found ${allOrgMemories.length} memories at org level`);
+      const learningMemories = allOrgMemories.filter((m) => m.metadata?.type === "learning");
+      console.log(`[learning] DEBUG GET: ${learningMemories.length} are learnings`);
+      for (const mem of learningMemories.slice(0, 3)) {
+        console.log(
+          `[learning] DEBUG GET: - "${mem.memory?.substring(0, 60)}..." user_id=${mem.user_id}`,
+        );
+      }
+    } catch (debugErr) {
+      console.log(`[learning] DEBUG GET failed:`, debugErr);
+    }
+
     // Search for relevant learnings at organization level
     const results = await client.searchMemories(query, {
       tenant,
@@ -319,7 +349,7 @@ export async function getLearnings(
       limit,
     });
 
-    console.log(`[learning] Mem0 returned ${results.length} org-level memories`);
+    console.log(`[learning] Mem0 search returned ${results.length} org-level memories`);
 
     // Filter to only learnings (type="learning" in metadata)
     const learnings = results
