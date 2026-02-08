@@ -290,14 +290,17 @@ export async function storeLearning(
   }
 
   try {
-    // Store at organization level so all users benefit
-    // Use fact-like format for better Mem0 extraction
-    const content = `Important organizational knowledge: For queries about ${trigger}, the correct approach is to ${lesson}. This is a learned behavior from user feedback.`;
+    // Store learning under the user's ID but with org-level metadata
+    // This ensures Mem0 accepts the user_id (existing format works)
+    // Then we filter by metadata when retrieving
+    const content = `Organization learning: For queries about ${trigger}, ${lesson}. This applies to all users in org ${tenant.organizationId}.`;
     const result = await client.addMemory(content, {
       tenant,
-      scopeLevel: "organization",
+      scopeLevel: "user", // Use user scope which works, but mark as org-level in metadata
       metadata: {
         type: "learning",
+        scope: "organization", // Mark as org-level learning
+        org_id: tenant.organizationId,
         trigger: trigger.toLowerCase(),
         lesson,
         learned_at: new Date().toISOString(),
@@ -344,33 +347,24 @@ export async function getLearnings(
   try {
     console.log(`[learning] Searching for learnings (org: ${tenant.organizationId})`);
 
-    // Debug: List all org-level memories directly (GET, not search)
-    try {
-      const allOrgMemories = await client.getMemories(tenant, "organization");
-      console.log(`[learning] DEBUG GET: Found ${allOrgMemories.length} memories at org level`);
-      const learningMemories = allOrgMemories.filter((m) => m.metadata?.type === "learning");
-      console.log(`[learning] DEBUG GET: ${learningMemories.length} are learnings`);
-      for (const mem of learningMemories.slice(0, 3)) {
-        console.log(
-          `[learning] DEBUG GET: - "${mem.memory?.substring(0, 60)}..." user_id=${mem.user_id}`,
-        );
-      }
-    } catch (debugErr) {
-      console.log(`[learning] DEBUG GET failed:`, debugErr);
-    }
-
-    // Search for relevant learnings at organization level
+    // Search user-level memories (which work) and filter for org learnings by metadata
     const results = await client.searchMemories(query, {
       tenant,
-      scopeLevels: ["organization"],
-      limit,
+      scopeLevels: ["user"], // Search user level where storage works
+      limit: limit * 2, // Get more to filter from
     });
 
-    console.log(`[learning] Mem0 search returned ${results.length} org-level memories`);
+    console.log(`[learning] Mem0 search returned ${results.length} user-level memories`);
 
-    // Filter to only learnings (type="learning" in metadata)
+    // Filter to only learnings with matching org (type="learning" and scope="organization")
     const learnings = results
-      .filter((r) => r.metadata?.type === "learning")
+      .filter((r) => {
+        const isLearning = r.metadata?.type === "learning";
+        const isOrgScope = r.metadata?.scope === "organization";
+        const matchesOrg = r.metadata?.org_id === tenant.organizationId;
+        return isLearning && isOrgScope && matchesOrg;
+      })
+      .slice(0, limit)
       .map((r) => {
         const lesson = r.metadata?.lesson;
         return typeof lesson === "string" ? lesson : r.memory;
@@ -378,8 +372,8 @@ export async function getLearnings(
 
     if (learnings.length > 0) {
       console.log(`[learning] Found ${learnings.length} learnings to apply`);
-    } else if (results.length > 0) {
-      console.log(`[learning] ${results.length} memories but none are learnings`);
+    } else {
+      console.log(`[learning] No learnings found for org ${tenant.organizationId}`);
     }
 
     return learnings;
