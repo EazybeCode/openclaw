@@ -162,6 +162,40 @@ export class Mem0Client {
     return allResults.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
+  // Search for org-level learnings using metadata filters
+  async searchLearningsByOrg(
+    query: string,
+    orgId: string,
+    limit: number = 5,
+  ): Promise<Mem0SearchResult[]> {
+    const agentId = this.orgId || "openclaw";
+
+    // Use metadata filters to find learnings for this org
+    const payload = {
+      query,
+      agent_id: agentId,
+      limit,
+      filters: {
+        AND: [{ "metadata.type": "learning" }, { "metadata.tenant_org": orgId }],
+      },
+    };
+
+    console.log(`[mem0] Learning search: org=${orgId}, agent=${agentId}`);
+
+    try {
+      const result = await this.request<{ results: Mem0SearchResult[] }>(
+        "/memories/search/",
+        "POST",
+        payload,
+      );
+      console.log(`[mem0] Learning search returned ${result.results?.length || 0} results`);
+      return result.results || [];
+    } catch (err) {
+      console.warn(`[mem0] Learning search failed:`, err);
+      return [];
+    }
+  }
+
   async getMemories(tenant: TenantContext, scopeLevel: ScopeLevel = "user"): Promise<Mem0Memory[]> {
     const scopeKey = createScopeKey(tenant, scopeLevel);
     const agentId = this.orgId || "openclaw";
@@ -290,17 +324,14 @@ export async function storeLearning(
   }
 
   try {
-    // Store learning under the user's ID but with org-level metadata
-    // This ensures Mem0 accepts the user_id (existing format works)
-    // Then we filter by metadata when retrieving
-    const content = `Organization learning: For queries about ${trigger}, ${lesson}. This applies to all users in org ${tenant.organizationId}.`;
+    // Store learning at organization level
+    // Format as a user preference/fact that Mem0 will extract
+    const content = `User prefers to ${lesson} when looking for ${trigger}. This is their standard workflow.`;
     const result = await client.addMemory(content, {
       tenant,
-      scopeLevel: "user", // Use user scope which works, but mark as org-level in metadata
+      scopeLevel: "organization",
       metadata: {
         type: "learning",
-        scope: "organization", // Mark as org-level learning
-        org_id: tenant.organizationId,
         trigger: trigger.toLowerCase(),
         lesson,
         learned_at: new Date().toISOString(),
@@ -347,24 +378,12 @@ export async function getLearnings(
   try {
     console.log(`[learning] Searching for learnings (org: ${tenant.organizationId})`);
 
-    // Search user-level memories (which work) and filter for org learnings by metadata
-    const results = await client.searchMemories(query, {
-      tenant,
-      scopeLevels: ["user"], // Search user level where storage works
-      limit: limit * 2, // Get more to filter from
-    });
+    // Use metadata filter search for org-level learnings
+    const results = await client.searchLearningsByOrg(query, tenant.organizationId, limit);
 
-    console.log(`[learning] Mem0 search returned ${results.length} user-level memories`);
-
-    // Filter to only learnings with matching org (type="learning" and scope="organization")
+    // Extract lessons from results
     const learnings = results
-      .filter((r) => {
-        const isLearning = r.metadata?.type === "learning";
-        const isOrgScope = r.metadata?.scope === "organization";
-        const matchesOrg = r.metadata?.org_id === tenant.organizationId;
-        return isLearning && isOrgScope && matchesOrg;
-      })
-      .slice(0, limit)
+      .filter((r) => r.metadata?.type === "learning")
       .map((r) => {
         const lesson = r.metadata?.lesson;
         return typeof lesson === "string" ? lesson : r.memory;
