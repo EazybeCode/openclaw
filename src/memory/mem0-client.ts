@@ -208,6 +208,97 @@ export class Mem0Client {
     return allResults.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
+  // Search for learnings by specific scope key (user-level or any scope)
+  // V2 API REQUIRES filters object - user_id/agent_id go inside filters
+  async searchLearningsByScope(
+    query: string,
+    scopeKey: string,
+    orgId: string,
+    limit: number = 5,
+  ): Promise<Mem0SearchResult[]> {
+    const agentId = this.orgId || "openclaw";
+
+    console.log(`[mem0] ========== SEARCH LEARNINGS BY SCOPE ==========`);
+    console.log(`[mem0] Query: "${query}"`);
+    console.log(`[mem0] Scope Key: ${scopeKey}`);
+    console.log(`[mem0] Org ID: ${orgId}`);
+    console.log(`[mem0] Agent ID: ${agentId}`);
+
+    // Try V2 API with user_id filter
+    try {
+      const payload = {
+        query,
+        top_k: limit * 3,
+        filters: {
+          user_id: scopeKey,
+          agent_id: agentId,
+        },
+      };
+
+      const rawResult = await this.request<Mem0SearchResult[] | { results: Mem0SearchResult[] }>(
+        "/memories/search/",
+        "POST",
+        payload,
+        "v2",
+      );
+
+      const results = Array.isArray(rawResult)
+        ? rawResult
+        : (rawResult as { results?: Mem0SearchResult[] }).results || [];
+
+      console.log(`[mem0] Scope search returned ${results.length} results`);
+
+      // Filter for learnings from this org
+      const learnings = results.filter(
+        (r) => r.metadata?.type === "learning" && r.metadata?.tenant_org === orgId,
+      );
+
+      if (learnings.length > 0) {
+        console.log(`[mem0] Found ${learnings.length} learnings for scope ${scopeKey}`);
+        return learnings.slice(0, limit);
+      }
+
+      // Return all results if no specific learnings found
+      if (results.length > 0) {
+        const orgResults = results.filter((r) => r.metadata?.tenant_org === orgId);
+        return orgResults.slice(0, limit);
+      }
+    } catch (err) {
+      console.warn(`[mem0] Scope search failed:`, err);
+    }
+
+    // Fallback: V1 API
+    try {
+      const payload = {
+        query,
+        user_id: scopeKey,
+        agent_id: agentId,
+        limit: limit * 3,
+      };
+
+      const rawResult = await this.request<Mem0SearchResult[] | { results: Mem0SearchResult[] }>(
+        "/memories/search/",
+        "POST",
+        payload,
+        "v1",
+      );
+
+      const results = Array.isArray(rawResult)
+        ? rawResult
+        : (rawResult as { results?: Mem0SearchResult[] }).results || [];
+
+      const learnings = results.filter(
+        (r) => r.metadata?.type === "learning" && r.metadata?.tenant_org === orgId,
+      );
+
+      return learnings.slice(0, limit);
+    } catch (err) {
+      console.warn(`[mem0] V1 scope search failed:`, err);
+    }
+
+    return [];
+  }
+
   // Search for org-level learnings using metadata filters
   // V2 API REQUIRES filters object - user_id/agent_id go inside filters
   async searchLearningsByOrg(
@@ -535,17 +626,26 @@ export async function storeMemory(
 // ============================================
 
 /**
+ * Learning scope levels for multi-tenant storage
+ */
+export type LearningScopeLevel = "user" | "organization";
+
+/**
  * Store a learning from user correction
- * Learnings are org-level so all users benefit
+ * Supports two-level multi-tenancy:
+ * - "user" level: Personal learnings for specific user in workspace
+ * - "organization" level: Shared learnings for all users in org
  */
 export async function storeLearning(
   trigger: string,
   lesson: string,
   tenant: TenantContext,
+  scopeLevel: LearningScopeLevel = "user", // Default to user-level
 ): Promise<boolean> {
   console.log(`[learning] ========== STORE LEARNING ==========`);
   console.log(`[learning] Trigger: "${trigger}"`);
   console.log(`[learning] Lesson: "${lesson}"`);
+  console.log(`[learning] Scope Level: ${scopeLevel}`);
   console.log(`[learning] Org: ${tenant.organizationId}`);
   console.log(`[learning] Workspace: ${tenant.workspaceId}`);
   console.log(`[learning] User: ${tenant.userId}`);
@@ -557,17 +657,25 @@ export async function storeLearning(
   }
 
   try {
-    // Store learning at organization level
     // Format as a clear preference that Mem0 AI can extract as a fact
     const content = `Important: When searching for ${trigger}, always ${lesson}. This is the preferred workflow.`;
 
     console.log(`[learning] Content to store: "${content}"`);
 
+    // Create scope key based on level
+    const scopeKey =
+      scopeLevel === "user"
+        ? `user:${tenant.organizationId}:${tenant.workspaceId}:${tenant.userId}`
+        : `org${tenant.organizationId}`;
+
+    console.log(`[learning] Scope Key: ${scopeKey}`);
+
     const result = await client.addMemory(content, {
       tenant,
-      scopeLevel: "organization",
+      scopeLevel: scopeLevel === "user" ? "user" : "organization",
       metadata: {
         type: "learning",
+        learning_scope: scopeLevel, // "user" or "organization"
         trigger: trigger.toLowerCase(),
         lesson,
         learned_at: new Date().toISOString(),
@@ -577,7 +685,7 @@ export async function storeLearning(
     console.log(`[learning] Store result: ${result.length} memories created`);
 
     if (result.length > 0) {
-      console.log(`[learning] SUCCESS: Learning stored`);
+      console.log(`[learning] SUCCESS: Learning stored at ${scopeLevel} level`);
       for (const mem of result) {
         console.log(`[learning] - ID: ${mem.id}`);
         console.log(`[learning] - Memory: "${mem.memory}"`);
@@ -596,16 +704,23 @@ export async function storeLearning(
 
 /**
  * Retrieve learnings relevant to a query
- * Searches for learnings that match trigger words in the query
+ * Role-based multi-tenant search:
+ * - Admin: All org learnings (everyone's learnings)
+ * - Manager: Team-based learnings (team members' learnings)
+ * - Employee: Workspace-based learnings (personal only)
  */
 export async function getLearnings(
   query: string,
   tenant: TenantContext,
   limit: number = 5,
 ): Promise<string[]> {
-  console.log(`[learning] ========== GET LEARNINGS ==========`);
+  console.log(`[learning] ========== GET LEARNINGS (Role-Based) ==========`);
   console.log(`[learning] Query: "${query.substring(0, 100)}..."`);
+  console.log(`[learning] Role: ${tenant.role}`);
   console.log(`[learning] Org: ${tenant.organizationId}`);
+  console.log(`[learning] Workspace: ${tenant.workspaceId}`);
+  console.log(`[learning] Team: ${tenant.teamId}`);
+  console.log(`[learning] User: ${tenant.userId}`);
   console.log(`[learning] Limit: ${limit}`);
 
   const client = getMem0Client();
@@ -614,30 +729,118 @@ export async function getLearnings(
     return [];
   }
 
+  const allLearnings: string[] = [];
+  const seenLessons = new Set<string>();
+
   try {
-    // Use metadata filter search for org-level learnings
-    const results = await client.searchLearningsByOrg(query, tenant.organizationId, limit);
+    // Role-based learning retrieval
+    switch (tenant.role) {
+      case "admin":
+        // Admin: Get ALL org learnings (everyone's learnings)
+        console.log(`[learning] ADMIN: Searching ALL org learnings...`);
+        await searchAndCollectLearnings(
+          client,
+          query,
+          `org${tenant.organizationId}`,
+          tenant.organizationId,
+          limit,
+          "ORG-ALL",
+          allLearnings,
+          seenLessons,
+        );
+        break;
 
-    console.log(`[learning] Search returned ${results.length} results`);
+      case "manager":
+        // Manager: Get team-based learnings + own learnings
+        console.log(`[learning] MANAGER: Searching TEAM learnings...`);
 
-    // Extract lessons from results
-    // If metadata has lesson, use that; otherwise use the memory text
-    const learnings = results.map((r) => {
-      const lesson = r.metadata?.lesson;
-      const learning = typeof lesson === "string" ? lesson : r.memory;
-      console.log(`[learning] Extracted: "${learning}"`);
-      return learning;
-    });
+        // 1. Own learnings first
+        const managerScopeKey = `user:${tenant.organizationId}:${tenant.workspaceId}:${tenant.userId}`;
+        await searchAndCollectLearnings(
+          client,
+          query,
+          managerScopeKey,
+          tenant.organizationId,
+          Math.ceil(limit / 2),
+          "SELF",
+          allLearnings,
+          seenLessons,
+        );
 
-    if (learnings.length > 0) {
-      console.log(`[learning] SUCCESS: Found ${learnings.length} learnings to apply`);
-    } else {
-      console.log(`[learning] No learnings found for org ${tenant.organizationId}`);
+        // 2. Team learnings
+        const teamScopeKey = `team:${tenant.organizationId}:${tenant.teamId}`;
+        await searchAndCollectLearnings(
+          client,
+          query,
+          teamScopeKey,
+          tenant.organizationId,
+          limit - allLearnings.length,
+          "TEAM",
+          allLearnings,
+          seenLessons,
+        );
+        break;
+
+      case "employee":
+      default:
+        // Employee: Get workspace-based learnings (personal only)
+        console.log(`[learning] EMPLOYEE: Searching PERSONAL learnings...`);
+        const userScopeKey = `user:${tenant.organizationId}:${tenant.workspaceId}:${tenant.userId}`;
+        await searchAndCollectLearnings(
+          client,
+          query,
+          userScopeKey,
+          tenant.organizationId,
+          limit,
+          "PERSONAL",
+          allLearnings,
+          seenLessons,
+        );
+        break;
     }
 
-    return learnings;
+    if (allLearnings.length > 0) {
+      console.log(
+        `[learning] SUCCESS: Found ${allLearnings.length} total learnings for ${tenant.role}`,
+      );
+    } else {
+      console.log(`[learning] No learnings found for ${tenant.role}`);
+    }
+
+    return allLearnings.slice(0, limit);
   } catch (err) {
     console.error("[learning] ERROR: Failed to retrieve learnings:", err);
     return [];
+  }
+}
+
+/**
+ * Helper function to search and collect learnings
+ */
+async function searchAndCollectLearnings(
+  client: Mem0Client,
+  query: string,
+  scopeKey: string,
+  orgId: string,
+  limit: number,
+  label: string,
+  allLearnings: string[],
+  seenLessons: Set<string>,
+): Promise<void> {
+  try {
+    const results = await client.searchLearningsByScope(query, scopeKey, orgId, limit);
+    console.log(`[learning] [${label}] Search returned ${results.length} results`);
+
+    for (const r of results) {
+      const lesson = r.metadata?.lesson;
+      const learning = typeof lesson === "string" ? lesson : r.memory;
+      if (!seenLessons.has(learning)) {
+        seenLessons.add(learning);
+        allLearnings.push(learning);
+        console.log(`[learning] [${label}] Extracted: "${learning}"`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[learning] [${label}] Search failed:`, err);
   }
 }

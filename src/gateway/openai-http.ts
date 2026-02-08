@@ -562,6 +562,7 @@ export async function handleOpenAiHttpRequest(
   // Log tenant info if present
   if (hasTenant) {
     console.log(`[openai-http] Tenant: ${tenantToString(tenant)}`);
+    console.log(`[openai-http] Role: ${tenant.role}`);
     console.log(`[openai-http] Scopes: ${getAllScopeKeys(tenant).join(", ")}`);
   }
 
@@ -702,12 +703,14 @@ export async function handleOpenAiHttpRequest(
           }
 
           if (correction.isCorrection && correction.trigger && correction.lesson) {
-            console.log(`[learning] Storing learning...`);
-            storeLearning(correction.trigger, correction.lesson, tenant)
+            console.log(`[learning] Storing learning at USER level...`);
+            // Store at user level by default (personal learning)
+            // Can be promoted to org level later if needed
+            storeLearning(correction.trigger, correction.lesson, tenant, "user")
               .then((stored) => {
                 if (stored) {
                   console.log(
-                    `[learning] SUCCESS: Stored correction: "${correction.trigger}" → "${correction.lesson}"`,
+                    `[learning] SUCCESS: Stored USER correction: "${correction.trigger}" → "${correction.lesson}"`,
                   );
                 } else {
                   console.log(`[learning] FAILED: Could not store correction`);

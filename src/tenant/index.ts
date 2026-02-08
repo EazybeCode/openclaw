@@ -18,6 +18,11 @@ export type Surface =
   | "discord";
 
 /**
+ * User roles for access control
+ */
+export type UserRole = "admin" | "manager" | "employee";
+
+/**
  * Complete tenant context
  */
 export interface TenantContext {
@@ -27,6 +32,7 @@ export interface TenantContext {
   userId: string;
   surface: Surface;
   sessionId: string;
+  role: UserRole; // User role for learning scope
   customerId?: string;
   metadata?: Record<string, unknown>;
   timestamp: Date;
@@ -85,12 +91,23 @@ export function extractTenantFromRequest(
     ? (rawSurface as Surface)
     : "api";
 
+  // Extract role from header or metadata
+  const rawRole =
+    getValue("x-role", "role") ||
+    ((safeBody.metadata as Record<string, unknown>)?.role as string) ||
+    "employee";
+  const validRoles: UserRole[] = ["admin", "manager", "employee"];
+  const role: UserRole = validRoles.includes(rawRole as UserRole)
+    ? (rawRole as UserRole)
+    : "employee";
+
   return {
     organizationId: getValue("x-org-id", "orgId"),
     workspaceId: getValue("x-workspace-id", "workspaceId"),
     teamId: getValue("x-team-id", "teamId"),
     userId: getValue("x-user-id", "userId"),
     surface,
+    role,
     sessionId:
       (safeBody.sessionId as string) ||
       `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
