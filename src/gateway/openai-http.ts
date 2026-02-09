@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
+import { getAgentConfig, initAgentRegistry } from "../agent/agent-config-registry.js";
 import {
   processMessage as omnisProcessMessage,
   handleCorrection as omnisHandleCorrection,
@@ -29,6 +30,9 @@ import {
   writeDone,
 } from "./http-common.js";
 import { getBearerToken, resolveAgentIdForRequest, resolveSessionKey } from "./http-utils.js";
+
+// Initialize agent config registry at module load
+initAgentRegistry();
 
 // REV AGENT URL for planning and orchestration
 const REV_AGENT_URL = process.env.REV_AGENT_URL || "http://localhost:8001";
@@ -104,6 +108,8 @@ type OpenAiChatCompletionRequest = {
   workspace_id?: unknown;
   org_id?: unknown;
   source?: unknown;
+  // Agent customization
+  agentType?: unknown;
 };
 
 // TenantContext is now imported from ../tenant/index.js
@@ -309,6 +315,22 @@ export async function handleOpenAiHttpRequest(
   const sessionKey = resolveOpenAiSessionKey({ req, agentId, user });
   const prompt = buildAgentPrompt(payload.messages);
 
+  // Resolve agent type from header or body
+  const agentTypeRaw =
+    (typeof req.headers["x-agent-type"] === "string" ? req.headers["x-agent-type"] : undefined) ||
+    (typeof payload.agentType === "string" ? payload.agentType : undefined);
+  const agentConfig = agentTypeRaw ? getAgentConfig(agentTypeRaw) : undefined;
+
+  if (agentTypeRaw) {
+    if (agentConfig) {
+      console.log(`[openai-http] Agent type: ${agentConfig.id} (${agentConfig.name})`);
+    } else {
+      console.warn(
+        `[openai-http] Unknown agent type "${agentTypeRaw}" – falling back to default Omnis`,
+      );
+    }
+  }
+
   // Add tenant context and memories to system prompt if tenant is valid
   let extraSystemPrompt = prompt.extraSystemPrompt || "";
   if (hasTenant && tenantValidation.ok) {
@@ -352,7 +374,7 @@ export async function handleOpenAiHttpRequest(
           `\n[omnis-gateway] ╔════════════════════════════════════════════════════════════╗`,
         );
         console.log(
-          `[omnis-gateway] ║           OMNIS AGENT - UNIFIED PROCESSING                 ║`,
+          `[omnis-gateway] ║           ${agentConfig ? `${agentConfig.name.toUpperCase()} - CUSTOM AGENT` : "OMNIS AGENT - UNIFIED PROCESSING"}                 ║`,
         );
         console.log(
           `[omnis-gateway] ╚════════════════════════════════════════════════════════════╝`,
@@ -382,7 +404,12 @@ export async function handleOpenAiHttpRequest(
           `[omnis-gateway] ─────────────────────────────────────────────────────────────`,
         );
 
-        const omnisResult = await omnisProcessMessage(prompt.message, conversationHistory, tenant);
+        const omnisResult = await omnisProcessMessage(
+          prompt.message,
+          conversationHistory,
+          tenant,
+          agentConfig,
+        );
 
         if (omnisResult.success && omnisResult.response) {
           content = omnisResult.response;

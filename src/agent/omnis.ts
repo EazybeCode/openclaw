@@ -17,6 +17,7 @@ import {
   getLearnings,
   type LearningScopeLevel,
 } from "../memory/mem0-client.js";
+import { type AgentConfig, resolveToolNames } from "./agent-config.js";
 
 // OpenAI configuration
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -142,6 +143,16 @@ const TOOLS = [
     },
   },
 ];
+
+/**
+ * Filter TOOLS array to only include tools enabled by the agent's skills.
+ * Returns all tools if no agentConfig is provided.
+ */
+function filterToolsBySkills(agentConfig?: AgentConfig): typeof TOOLS {
+  if (!agentConfig) return TOOLS;
+  const enabledNames = resolveToolNames(agentConfig.skills);
+  return TOOLS.filter((t) => enabledNames.includes(t.function.name));
+}
 
 export interface OmnisMessage {
   role: "user" | "assistant" | "system";
@@ -310,6 +321,7 @@ async function callGPT(
   messages: Array<{ role: string; content: string; tool_call_id?: string; name?: string }>,
   tenant: TenantContext,
   maxIterations: number = 5,
+  filteredTools?: typeof TOOLS,
 ): Promise<{ response: string; toolsUsed: string[] }> {
   if (!OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY not configured");
@@ -332,7 +344,7 @@ async function callGPT(
       body: JSON.stringify({
         model: OPENAI_MODEL,
         messages: currentMessages,
-        tools: TOOLS,
+        tools: filteredTools ?? TOOLS,
         tool_choice: "auto",
       }),
     });
@@ -391,22 +403,18 @@ async function callGPT(
 }
 
 /**
- * Build system prompt with tenant context
+ * Build tool documentation section for the system prompt.
+ * Only includes docs for the enabled tool names.
  */
-function buildSystemPrompt(tenant: TenantContext): string {
-  return `You are Omnis, an intelligent Revenue Intelligence Agent for Eazybe.
+function buildToolDocumentation(tenant: TenantContext, enabledToolNames?: string[]): string {
+  const allTools = !enabledToolNames;
+  const has = (name: string) => allTools || enabledToolNames!.includes(name);
 
-## Current User Context
-- Organization ID: ${tenant.organizationId}
-- Workspace ID: ${tenant.workspaceId}
-- Team ID: ${tenant.teamId}
-- User ID: ${tenant.userId}
-- Role: ${tenant.role}
-- Surface: ${tenant.surface}
+  let docs = "\n## Your Tools\n";
 
-## Your Tools
-
-### 1. query_bigquery - Analytics Data
+  if (has("query_bigquery")) {
+    docs += `
+### query_bigquery - Analytics Data
 **Dataset**: \`waba-454907.whatsapp_analytics.daily_performance_summary\`
 **Columns**:
 - user_id (string) - Employee's user_id (e.g., "14024" for Mohit, "1170365" for Chandan)
@@ -439,25 +447,25 @@ SELECT user_id,
 FROM waba-454907.whatsapp_analytics.daily_performance_summary
 WHERE org_id='${tenant.organizationId}'
 GROUP BY user_id
-
--- Compare specific employees (after getting user_ids from get_team_member)
-SELECT user_id,
-       AVG(avg_agent_response_time_seconds) as avg_response,
-       SUM(agent_message_count) as messages
-FROM waba-454907.whatsapp_analytics.daily_performance_summary
-WHERE org_id='${tenant.organizationId}' AND user_id IN ('14024', '1170365')
-GROUP BY user_id
 \`\`\`
+`;
+  }
 
-### 2. get_team_member - Find User IDs from Names
+  if (has("get_team_member")) {
+    docs += `
+### get_team_member - Find User IDs from Names
 **Use this FIRST** when user mentions names like "Mohit", "Chandan", etc.
 
 Examples:
 - "find" + name: "mohit" → returns \`{"user_id": "14024", "name": "Mohit Eazybe", ...}\`
 - "find" + name: "chandan" → returns \`{"user_id": "1170365", "name": "Chandan modi", ...}\`
-- "list" → returns all 37 team members with their user_ids
+- "list" → returns all team members with their user_ids
+`;
+  }
 
-### 3. search_crm_objects - HubSpot CRM Data
+  if (has("search_crm_objects")) {
+    docs += `
+### search_crm_objects - HubSpot CRM Data
 Search deals, contacts, companies, tickets in HubSpot.
 
 **Parameters**:
@@ -469,43 +477,121 @@ Search deals, contacts, companies, tickets in HubSpot.
 
 **Examples**:
 - Latest deals: \`search_crm_objects(objectType="deals", properties=["dealname","amount","dealstage","closedate","createdate","pipeline"], limit=5)\`
-- Search contacts: \`search_crm_objects(objectType="contacts", query="John")\`
 - Deals by owner: \`search_crm_objects(objectType="deals", filterGroups=[{"filters":[{"propertyName":"hubspot_owner_id","operator":"EQ","value":"456232774"}]}])\`
+`;
+  }
 
-### 4. search_owners - Find HubSpot Sales Reps
+  if (has("search_owners")) {
+    docs += `
+### search_owners - Find HubSpot Sales Reps
 Find owner/rep IDs by name. Use BEFORE search_crm_objects when filtering by rep.
 
 **Example**: \`search_owners(searchQuery="Mohit")\` → returns ownerId
+`;
+  }
 
-### 5. search_knowledge_base - Documentation
+  if (has("search_knowledge_base")) {
+    docs += `
+### search_knowledge_base - Documentation & Knowledge Base
 Search product docs and past conversations.
 
-## Workflow Examples
-
-**"Compare Mohit and Chandan performance"**:
-1. get_team_member(action="find", name="mohit") → user_id: "14024"
-2. get_team_member(action="find", name="chandan") → user_id: "1170365"
-3. query_bigquery: SELECT user_id, AVG(avg_agent_response_time_seconds), SUM(agent_message_count) FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}' AND user_id IN ('14024', '1170365') GROUP BY user_id
-4. Format comparison table with names
-
-**"Give me last created deal"**:
-1. search_crm_objects(objectType="deals", properties=["dealname","amount","dealstage","closedate","createdate","pipeline"], limit=5)
-2. Find the most recent by createdate and present it
-
-**"Find deals for rep Mohit"**:
-1. search_owners(searchQuery="Mohit") → get ownerId
-2. search_crm_objects(objectType="deals", filterGroups=[{"filters":[{"propertyName":"hubspot_owner_id","operator":"EQ","value":"<ownerId>"}]}])
-
-**"What is the average response time?"**:
-1. query_bigquery: SELECT AVG(avg_agent_response_time_seconds) FROM waba-454907.whatsapp_analytics.daily_performance_summary WHERE org_id='${tenant.organizationId}'
-
-## Guidelines
-- ALWAYS use full table: waba-454907.whatsapp_analytics.daily_performance_summary
-- ALWAYS filter by org_id='${tenant.organizationId}'
-- For names → get_team_member FIRST to get user_id (for BigQuery)
-- For HubSpot rep filtering → search_owners FIRST to get ownerId
-- Be concise, use tables for data
+**Example**: \`search_knowledge_base(query="how to set up integration")\`
 `;
+  }
+
+  docs += `
+## Tool Rules
+- ALWAYS use full table: \`waba-454907.whatsapp_analytics.daily_performance_summary\`
+- ALWAYS filter by org_id='${tenant.organizationId}' in BigQuery queries
+- NEVER guess IDs — always resolve them via get_team_member or search_owners first
+- Call multiple tools in sequence when needed — don't try to answer complex questions from a single tool call
+- If a tool returns an error or empty result, try a different approach (broader search, different filters) before giving up
+- When BigQuery returns null for avg_agent_response_time_seconds, note it as "no data" not "0 seconds"
+`;
+
+  return docs;
+}
+
+/**
+ * Substitute {{variable}} placeholders in a template string.
+ */
+function substituteTemplateVars(template: string, tenant: TenantContext): string {
+  return template
+    .replace(/\{\{org_id\}\}/g, tenant.organizationId)
+    .replace(/\{\{workspace_id\}\}/g, tenant.workspaceId)
+    .replace(/\{\{team_id\}\}/g, tenant.teamId)
+    .replace(/\{\{user_id\}\}/g, tenant.userId)
+    .replace(/\{\{role\}\}/g, tenant.role)
+    .replace(/\{\{surface\}\}/g, tenant.surface);
+}
+
+/**
+ * Build system prompt with tenant context.
+ * If agentConfig is provided, uses its template + filtered tool docs.
+ * Otherwise, uses the default Omnis prompt with all tools.
+ */
+function buildSystemPrompt(tenant: TenantContext, agentConfig?: AgentConfig): string {
+  if (agentConfig) {
+    // Custom agent: use template with variable substitution + filtered tool docs
+    const enabledToolNames = resolveToolNames(agentConfig.skills);
+    const customPrompt = substituteTemplateVars(agentConfig.systemPromptTemplate, tenant);
+    const toolDocs = buildToolDocumentation(tenant, enabledToolNames);
+    return customPrompt + "\n" + toolDocs;
+  }
+
+  // Default Omnis prompt
+  return (
+    `You are Omnis, an intelligent Revenue Intelligence Agent for Eazybe.
+
+You help sales leaders, managers, and reps understand their pipeline, team performance, and customer interactions by combining CRM data, analytics, knowledge base, and conversation history.
+
+## Current User Context
+- Organization ID: ${tenant.organizationId}
+- Workspace ID: ${tenant.workspaceId}
+- Team ID: ${tenant.teamId}
+- User ID: ${tenant.userId}
+- Role: ${tenant.role}
+- Surface: ${tenant.surface}
+
+## How to Think (Planning)
+
+For every query, follow this process:
+
+1. **Understand the intent** — What is the user really asking? A simple data lookup, a comparison, or a deep analysis?
+2. **Plan your tool calls** — Before calling any tool, mentally list which tools you need and in what order. Some tools give you IDs that other tools need.
+3. **Resolve identifiers first** — Always get IDs before querying data:
+   - Person names → use \`get_team_member\` to get user_id/workspace_id
+   - Sales rep names → use \`search_owners\` to get ownerId
+   - Then use those IDs in \`query_bigquery\` or \`search_crm_objects\`
+4. **Gather from multiple sources** — Complex questions need data from multiple tools. Don't stop after one tool call if more data would give a better answer.
+5. **Synthesize and explain** — Combine all data into a clear, actionable answer. Don't just dump raw data — explain what it means.
+
+## When to Use Multiple Tools Together
+
+**Performance questions** (e.g., "How is Mohit performing?"):
+→ get_team_member (get user_id) → query_bigquery (get metrics) → search_crm_objects (get their deals)
+
+**Pipeline/deal questions** (e.g., "Why are deals not closing?"):
+→ search_crm_objects (get deals + stages) → get_team_member (list team) → query_bigquery (response times, activity) → search_knowledge_base (best practices)
+
+**Comparison questions** (e.g., "Compare Mohit and Chandan"):
+→ get_team_member for each name → query_bigquery with both user_ids → present side-by-side
+
+**Customer questions** (e.g., "What happened with contact X?"):
+→ search_crm_objects (find contact/deals) → search_knowledge_base (past conversations) → query_bigquery (interaction data)
+
+**Product/how-to questions** (e.g., "How does feature X work?"):
+→ search_knowledge_base first → supplement with CRM data if relevant
+
+## Response Format
+
+- Use **tables** for comparing numbers or listing data
+- **Bold** key insights and metrics
+- Add a brief **takeaway** or **recommendation** at the end of analytical answers
+- When presenting time metrics, convert seconds to human-readable format (e.g., "2m 34s" not "154 seconds")
+- Keep responses concise but complete — don't omit important data points
+` + buildToolDocumentation(tenant)
+  );
 }
 
 /**
@@ -515,44 +601,61 @@ export async function processMessage(
   userMessage: string,
   conversationHistory: OmnisMessage[],
   tenant: TenantContext,
+  agentConfig?: AgentConfig,
 ): Promise<OmnisResponse> {
-  console.log(`\n[omnis] ========== OMNIS AGENT ==========`);
+  const agentLabel = agentConfig ? `${agentConfig.name} (${agentConfig.id})` : "OMNIS";
+  const hasMemorySkill = !agentConfig || agentConfig.skills.includes("memory");
+
+  console.log(`\n[omnis] ========== ${agentLabel} AGENT ==========`);
   console.log(`[omnis] Message: "${userMessage.substring(0, 100)}..."`);
   console.log(`[omnis] Tenant: ${tenant.userId}@${tenant.workspaceId}.${tenant.organizationId}`);
   console.log(`[omnis] Role: ${tenant.role}`);
+  if (agentConfig) {
+    console.log(`[omnis] Agent type: ${agentConfig.id}`);
+    console.log(`[omnis] Skills: [${agentConfig.skills.join(", ")}]`);
+    console.log(`[omnis] Behaviors: [${agentConfig.behaviors.join(", ")}]`);
+  }
 
   const toolsUsed: string[] = [];
   let memoriesUsed = 0;
   let learningsApplied = 0;
 
   try {
-    // STEP 1: Search memories
-    console.log(`[omnis] Step 1: Searching memories...`);
+    // STEP 1: Search memories (skip if memory skill not enabled)
     let memoryContext = "";
-    try {
-      memoryContext = await buildMemoryContext(userMessage, tenant, 5);
-      if (memoryContext) {
-        memoriesUsed = (memoryContext.match(/- \[/g) || []).length;
-        console.log(`[omnis] Found ${memoriesUsed} memories`);
+    if (hasMemorySkill) {
+      console.log(`[omnis] Step 1: Searching memories...`);
+      try {
+        memoryContext = await buildMemoryContext(userMessage, tenant, 5);
+        if (memoryContext) {
+          memoriesUsed = (memoryContext.match(/- \[/g) || []).length;
+          console.log(`[omnis] Found ${memoriesUsed} memories`);
+        }
+      } catch (err) {
+        console.warn(`[omnis] Memory search failed:`, err);
       }
-    } catch (err) {
-      console.warn(`[omnis] Memory search failed:`, err);
+    } else {
+      console.log(`[omnis] Step 1: Skipping memories (memory skill not enabled)`);
     }
 
-    // STEP 2: Get learnings (role-based)
-    console.log(`[omnis] Step 2: Getting learnings (role: ${tenant.role})...`);
+    // STEP 2: Get learnings (skip if memory skill not enabled)
     let learnings: string[] = [];
-    try {
-      learnings = await getLearnings(userMessage, tenant, 5);
-      learningsApplied = learnings.length;
-      console.log(`[omnis] Found ${learningsApplied} learnings`);
-    } catch (err) {
-      console.warn(`[omnis] Learning search failed:`, err);
+    if (hasMemorySkill) {
+      console.log(`[omnis] Step 2: Getting learnings (role: ${tenant.role})...`);
+      try {
+        learnings = await getLearnings(userMessage, tenant, 5);
+        learningsApplied = learnings.length;
+        console.log(`[omnis] Found ${learningsApplied} learnings`);
+      } catch (err) {
+        console.warn(`[omnis] Learning search failed:`, err);
+      }
+    } else {
+      console.log(`[omnis] Step 2: Skipping learnings (memory skill not enabled)`);
     }
 
     // STEP 3: Build messages for GPT
     console.log(`[omnis] Step 3: Building context...`);
-    const systemPrompt = buildSystemPrompt(tenant);
+    const systemPrompt = buildSystemPrompt(tenant, agentConfig);
 
     let enrichedSystemPrompt = systemPrompt;
     if (memoryContext) {
@@ -568,23 +671,64 @@ export async function processMessage(
       { role: "user", content: userMessage },
     ];
 
-    // STEP 4: Call GPT with tools
+    // STEP 4: Call GPT with tools (filtered by agent skills)
     console.log(`[omnis] Step 4: Calling GPT...`);
-    const gptResult = await callGPT(messages, tenant);
+    const filteredTools = filterToolsBySkills(agentConfig);
+    if (agentConfig) {
+      console.log(
+        `[omnis] Enabled tools: [${filteredTools.map((t) => t.function.name).join(", ")}]`,
+      );
+    }
+    const gptResult = await callGPT(messages, tenant, 5, filteredTools);
     toolsUsed.push(...gptResult.toolsUsed);
 
     console.log(`[omnis] GPT response received (${gptResult.response.length} chars)`);
     console.log(`[omnis] Tools used: ${toolsUsed.join(", ") || "none"}`);
 
-    // STEP 5: Store conversation memory
-    console.log(`[omnis] Step 5: Storing memory...`);
-    try {
-      await storeMemory(userMessage, tenant, "user");
-    } catch (err) {
-      console.warn(`[omnis] Failed to store memory:`, err);
+    // STEP 5: Store conversation memory (skip if memory skill not enabled)
+    if (hasMemorySkill) {
+      console.log(`[omnis] Step 5: Storing memory...`);
+      try {
+        await storeMemory(userMessage, tenant, "user");
+      } catch (err) {
+        console.warn(`[omnis] Failed to store memory:`, err);
+      }
+    } else {
+      console.log(`[omnis] Step 5: Skipping memory storage (memory skill not enabled)`);
     }
 
-    console.log(`[omnis] ========== OMNIS COMPLETE ==========\n`);
+    // STEP 6: Behavior hooks (post-response)
+    if (agentConfig?.behaviors.length) {
+      console.log(`[omnis] Step 6: Running behavior hooks...`);
+      for (const behavior of agentConfig.behaviors) {
+        switch (behavior) {
+          case "log_interactions":
+            console.log(
+              `[omnis-behavior] log_interactions: agent=${agentConfig.id} tenant=${tenant.userId}@${tenant.organizationId} tools=[${toolsUsed.join(",")}]`,
+            );
+            break;
+          case "escalate_negative_sentiment":
+            // Simple negative sentiment check on user message
+            if (
+              /\b(angry|frustrated|terrible|worst|hate|unacceptable|urgent|asap)\b/i.test(
+                userMessage,
+              )
+            ) {
+              console.log(
+                `[omnis-behavior] escalate_negative_sentiment: ESCALATION TRIGGERED for tenant=${tenant.userId}@${tenant.organizationId}`,
+              );
+            }
+            break;
+          case "proactive_reminders":
+            console.log(
+              `[omnis-behavior] proactive_reminders: checked for agent=${agentConfig.id}`,
+            );
+            break;
+        }
+      }
+    }
+
+    console.log(`[omnis] ========== ${agentLabel} COMPLETE ==========\n`);
 
     return {
       success: true,
