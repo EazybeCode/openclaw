@@ -27,7 +27,13 @@ export interface AgentConfig {
  * Memory is handled by Mem0 client, not a GPT tool.
  */
 export const SKILL_TO_TOOLS: Record<SkillName, string[]> = {
-  hubspot: ["search_crm_objects", "search_owners"],
+  hubspot: [
+    "search_crm_objects",
+    "search_owners",
+    "get_crm_object",
+    "list_associations",
+    "list_pipelines",
+  ],
   bigquery: ["query_bigquery"],
   qdrant: ["search_knowledge_base"],
   team: ["get_team_member"],

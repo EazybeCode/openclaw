@@ -119,13 +119,26 @@ That's it. After rebuild/restart:
 
 ## Available Skills
 
-| Skill      | GPT Tools Enabled                     | Purpose                           |
-| ---------- | ------------------------------------- | --------------------------------- |
-| `hubspot`  | `search_crm_objects`, `search_owners` | CRM data (deals, contacts)        |
-| `bigquery` | `query_bigquery`                      | Analytics queries                 |
-| `qdrant`   | `search_knowledge_base`               | Knowledge base search             |
-| `team`     | `get_team_member`                     | Team member lookup                |
-| `memory`   | _(none — controls Mem0 client)_       | Memory search, learnings, storage |
+| Skill      | GPT Tools Enabled                                                                              | Purpose                           |
+| ---------- | ---------------------------------------------------------------------------------------------- | --------------------------------- |
+| `hubspot`  | `search_crm_objects`, `search_owners`, `get_crm_object`, `list_associations`, `list_pipelines` | CRM data (deals, contacts, etc.)  |
+| `bigquery` | `query_bigquery`                                                                               | Analytics queries                 |
+| `qdrant`   | `search_knowledge_base`                                                                        | Knowledge base search             |
+| `team`     | `get_team_member`                                                                              | Team member lookup                |
+| `memory`   | _(none — controls Mem0 client)_                                                                | Memory search, learnings, storage |
+
+### All Tools Reference
+
+| Tool                    | Skill    | What It Does                                                            |
+| ----------------------- | -------- | ----------------------------------------------------------------------- |
+| `search_crm_objects`    | hubspot  | Search deals, contacts, companies, tickets with filters                 |
+| `search_owners`         | hubspot  | Find HubSpot owner/rep IDs by name                                      |
+| `get_crm_object`        | hubspot  | Get full details of a single CRM record by ID                           |
+| `list_associations`     | hubspot  | Find related records (e.g., contacts on a deal, deals for a company)    |
+| `list_pipelines`        | hubspot  | View deal/ticket pipeline stages                                        |
+| `query_bigquery`        | bigquery | Run SQL queries on WhatsApp analytics data                              |
+| `get_team_member`       | team     | Find team member by name (returns user_id) or list all members          |
+| `search_knowledge_base` | qdrant   | Semantic search over product docs, past conversations, stored knowledge |
 
 The mapping lives in `SKILL_TO_TOOLS` in `agent-config.ts`. To add a new skill:
 
@@ -134,6 +147,7 @@ The mapping lives in `SKILL_TO_TOOLS` in `agent-config.ts`. To add a new skill:
 3. Add to `KNOWN_SKILLS`
 4. Add the tool definition to `TOOLS` array in `omnis.ts`
 5. Add the tool execution handler in `executeTool()` in `omnis.ts`
+6. Add tool documentation in `buildToolDocumentation()` in `omnis.ts`
 
 ---
 

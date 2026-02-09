@@ -25,6 +25,7 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4-turbo-preview";
 
 // Tool definitions for GPT function calling
 const TOOLS = [
+  // ── BigQuery ────────────────────────────────
   {
     type: "function" as const,
     function: {
@@ -44,12 +45,13 @@ const TOOLS = [
       },
     },
   },
+  // ── HubSpot ─────────────────────────────────
   {
     type: "function" as const,
     function: {
       name: "search_crm_objects",
       description:
-        "Search HubSpot CRM objects (deals, contacts, companies, tickets). This is the main HubSpot tool. Use objectType to specify what to search. For filtering by owner, use filterGroups with hubspot_owner_id property.",
+        "Search HubSpot CRM objects (deals, contacts, companies, tickets). This is the main HubSpot search tool. Use objectType to specify what to search. For filtering by owner, use filterGroups with hubspot_owner_id property.",
       parameters: {
         type: "object",
         properties: {
@@ -104,6 +106,82 @@ const TOOLS = [
   {
     type: "function" as const,
     function: {
+      name: "get_crm_object",
+      description:
+        "Get a single HubSpot CRM object by its ID. Use this after search_crm_objects to get full details of a specific deal, contact, company, or ticket.",
+      parameters: {
+        type: "object",
+        properties: {
+          objectType: {
+            type: "string",
+            enum: ["deals", "contacts", "companies", "tickets"],
+            description: "Type of CRM object",
+          },
+          objectId: {
+            type: "string",
+            description: "The HubSpot object ID",
+          },
+          properties: {
+            type: "array",
+            description: "Specific properties to return",
+            items: { type: "string" },
+          },
+        },
+        required: ["objectType", "objectId"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "list_associations",
+      description:
+        "List associations between HubSpot CRM objects. For example, find all contacts associated with a deal, or all deals associated with a company.",
+      parameters: {
+        type: "object",
+        properties: {
+          fromObjectType: {
+            type: "string",
+            enum: ["deals", "contacts", "companies", "tickets"],
+            description: "Source object type",
+          },
+          fromObjectId: {
+            type: "string",
+            description: "Source object ID",
+          },
+          toObjectType: {
+            type: "string",
+            enum: ["deals", "contacts", "companies", "tickets"],
+            description: "Target object type to find associations for",
+          },
+        },
+        required: ["fromObjectType", "fromObjectId", "toObjectType"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "list_pipelines",
+      description:
+        "List all deal or ticket pipelines with their stages. Use this to understand pipeline structure before creating or updating deals/tickets.",
+      parameters: {
+        type: "object",
+        properties: {
+          objectType: {
+            type: "string",
+            enum: ["deals", "tickets"],
+            description: "Object type to list pipelines for",
+          },
+        },
+        required: ["objectType"],
+      },
+    },
+  },
+  // ── Team ─────────────────────────────────────
+  {
+    type: "function" as const,
+    function: {
       name: "get_team_member",
       description:
         "Get team member info or find workspace_id from name. Use this FIRST before BigQuery when user mentions employee names. Returns workspace_id which is used as user_id in BigQuery.",
@@ -124,18 +202,19 @@ const TOOLS = [
       },
     },
   },
+  // ── Qdrant Knowledge Base ────────────────────
   {
     type: "function" as const,
     function: {
       name: "search_knowledge_base",
       description:
-        "Search Qdrant knowledge base for product info, documentation, past conversations",
+        "Search Qdrant knowledge base for product info, documentation, past conversations, and any stored knowledge. Use this for how-to questions, product features, and historical context.",
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "The search query",
+            description: "The search query (natural language)",
           },
         },
         required: ["query"],
@@ -215,6 +294,28 @@ async function executePythonTool(
 }
 
 /**
+ * Call any HubSpot MCP tool via the generic Python client.
+ */
+async function callHubSpotTool(
+  toolName: string,
+  hubspotArgs: Record<string, unknown>,
+  tenant: TenantContext,
+): Promise<string> {
+  const result = await executePythonTool("/app/skills/hubspot-mcp/scripts/hubspot.py", [
+    "--org-id",
+    tenant.organizationId,
+    "--workspace-id",
+    tenant.workspaceId,
+    "call",
+    toolName,
+    "--args",
+    JSON.stringify(hubspotArgs),
+  ]);
+  console.log(`[omnis] HubSpot ${toolName} result: ${result.substring(0, 200)}...`);
+  return result;
+}
+
+/**
  * Execute a tool based on GPT function call
  */
 async function executeTool(
@@ -227,6 +328,7 @@ async function executeTool(
 
   try {
     switch (name) {
+      // ── BigQuery ──────────────────────────────
       case "query_bigquery": {
         const sql = args.sql as string;
         const result = await executePythonTool("/app/skills/bigquery-mcp/scripts/bigquery.py", [
@@ -237,49 +339,54 @@ async function executeTool(
         return result;
       }
 
+      // ── HubSpot ───────────────────────────────
       case "search_crm_objects": {
-        // HubSpot MCP tool: search_crm_objects
-        // Pass full arguments as JSON via --args flag
         const hubspotArgs: Record<string, unknown> = {};
         if (args.objectType) hubspotArgs.objectType = args.objectType;
         if (args.query) hubspotArgs.query = args.query;
         if (args.filterGroups) hubspotArgs.filterGroups = args.filterGroups;
         if (args.properties) hubspotArgs.properties = args.properties;
         if (args.limit) hubspotArgs.limit = args.limit;
-
-        const result = await executePythonTool("/app/skills/hubspot-mcp/scripts/hubspot.py", [
-          "--org-id",
-          tenant.organizationId,
-          "--workspace-id",
-          tenant.workspaceId,
-          "call",
-          "search_crm_objects",
-          "--args",
-          JSON.stringify(hubspotArgs),
-        ]);
-        console.log(`[omnis] HubSpot search_crm_objects result: ${result.substring(0, 200)}...`);
-        return result;
+        return callHubSpotTool("search_crm_objects", hubspotArgs, tenant);
       }
 
-      case "search_owners": {
-        // HubSpot MCP tool: search_owners
-        const searchQuery = (args.searchQuery as string) || "";
-        const hubspotArgs = { searchQuery };
-
-        const result = await executePythonTool("/app/skills/hubspot-mcp/scripts/hubspot.py", [
-          "--org-id",
-          tenant.organizationId,
-          "--workspace-id",
-          tenant.workspaceId,
-          "call",
+      case "search_owners":
+        return callHubSpotTool(
           "search_owners",
-          "--args",
-          JSON.stringify(hubspotArgs),
-        ]);
-        console.log(`[omnis] HubSpot search_owners result: ${result.substring(0, 200)}...`);
-        return result;
+          { searchQuery: (args.searchQuery as string) || "" },
+          tenant,
+        );
+
+      case "get_crm_object": {
+        const hubspotArgs: Record<string, unknown> = {
+          objectType: args.objectType,
+          objectId: args.objectId,
+        };
+        if (args.properties) hubspotArgs.properties = args.properties;
+        return callHubSpotTool("get_crm_object", hubspotArgs, tenant);
       }
 
+      case "list_associations":
+        return callHubSpotTool(
+          "list_associations",
+          {
+            fromObjectType: args.fromObjectType,
+            fromObjectId: args.fromObjectId,
+            toObjectType: args.toObjectType,
+          },
+          tenant,
+        );
+
+      case "list_pipelines":
+        return callHubSpotTool(
+          "list_pipelines",
+          {
+            objectType: args.objectType,
+          },
+          tenant,
+        );
+
+      // ── Team ──────────────────────────────────
       case "get_team_member": {
         const action = args.action as string;
         const memberName = (args.name as string) || "";
@@ -295,6 +402,7 @@ async function executeTool(
         return result;
       }
 
+      // ── Qdrant Knowledge Base ─────────────────
       case "search_knowledge_base": {
         const query = args.query as string;
         const result = await executePythonTool("/app/skills/qdrant-mcp/scripts/qdrant.py", [
@@ -487,6 +595,35 @@ Search deals, contacts, companies, tickets in HubSpot.
 Find owner/rep IDs by name. Use BEFORE search_crm_objects when filtering by rep.
 
 **Example**: \`search_owners(searchQuery="Mohit")\` → returns ownerId
+`;
+  }
+
+  if (has("get_crm_object")) {
+    docs += `
+### get_crm_object - Get Full CRM Record Details
+Get a single HubSpot object by ID. Use after search_crm_objects to get full details of a specific record.
+
+**Example**: \`get_crm_object(objectType="deals", objectId="12345", properties=["dealname","amount","dealstage","notes_last_updated"])\`
+`;
+  }
+
+  if (has("list_associations")) {
+    docs += `
+### list_associations - Find Related CRM Records
+Find associations between objects. E.g., all contacts on a deal, or all deals for a company.
+
+**Examples**:
+- Contacts on a deal: \`list_associations(fromObjectType="deals", fromObjectId="12345", toObjectType="contacts")\`
+- Deals for a company: \`list_associations(fromObjectType="companies", fromObjectId="67890", toObjectType="deals")\`
+`;
+  }
+
+  if (has("list_pipelines")) {
+    docs += `
+### list_pipelines - View Pipeline Stages
+List all deal or ticket pipelines with their stages. Use this to understand valid stage IDs before creating/updating deals.
+
+**Example**: \`list_pipelines(objectType="deals")\`
 `;
   }
 
