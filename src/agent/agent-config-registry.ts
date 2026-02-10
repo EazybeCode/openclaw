@@ -1,16 +1,30 @@
 // ============================================
 // AGENT CONFIG REGISTRY - Singleton Registry
 // ============================================
+// Loads agent configs from markdown (fallback) and
+// enriches system prompts from MongoDB at startup.
+// ============================================
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentConfig } from "./agent-config.js";
 import { parseAgentConfigs } from "./agent-config-parser.js";
+import { getPrompt } from "./prompt-service.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let registry: Map<string, AgentConfig> | undefined;
+let mongoEnriched = false;
+
+/**
+ * Maps agent kebab-case ID → MongoDB prompt_name.
+ */
+const AGENT_MONGO_PROMPT: Record<string, string> = {
+  "sales-agent": "open_claw_SALES_AGENT",
+  "support-agent": "open_claw_SUPPORT_AGENT",
+  "analytics-agent": "open_claw_ANALYTICS_AGENT",
+};
 
 /**
  * Resolve the path to the agents config file.
@@ -60,10 +74,37 @@ function ensureLoaded(): Map<string, AgentConfig> {
 }
 
 /**
- * Initialize the registry eagerly. Call at startup.
+ * Enrich loaded agent configs with prompts from MongoDB.
+ * Overwrites systemPromptTemplate with the DB version when available.
+ * Falls back silently to the markdown template on any error.
  */
-export function initAgentRegistry(): void {
+async function enrichFromMongo(): Promise<void> {
+  if (mongoEnriched) return;
+  mongoEnriched = true;
+
+  const reg = ensureLoaded();
+  for (const [agentId, config] of reg) {
+    const promptName = AGENT_MONGO_PROMPT[agentId];
+    if (!promptName) continue;
+    try {
+      const dbPrompt = await getPrompt(promptName);
+      if (dbPrompt) {
+        config.systemPromptTemplate = dbPrompt;
+        console.log(`[agent-registry] Enriched "${agentId}" prompt from MongoDB (${promptName})`);
+      }
+    } catch (err) {
+      console.warn(`[agent-registry] MongoDB enrichment failed for "${agentId}":`, err);
+    }
+  }
+}
+
+/**
+ * Initialize the registry eagerly. Call at startup.
+ * Loads from markdown first, then enriches from MongoDB.
+ */
+export async function initAgentRegistry(): Promise<void> {
   ensureLoaded();
+  await enrichFromMongo();
 }
 
 /**

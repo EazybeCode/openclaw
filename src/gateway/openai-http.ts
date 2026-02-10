@@ -31,8 +31,8 @@ import {
 } from "./http-common.js";
 import { getBearerToken, resolveAgentIdForRequest, resolveSessionKey } from "./http-utils.js";
 
-// Initialize agent config registry at module load
-initAgentRegistry();
+// Initialize agent config registry at module load (loads from markdown + enriches from MongoDB)
+await initAgentRegistry();
 
 // REV AGENT URL for planning and orchestration
 const REV_AGENT_URL = process.env.REV_AGENT_URL || "http://localhost:8001";

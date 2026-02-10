@@ -18,6 +18,7 @@ import {
   type LearningScopeLevel,
 } from "../memory/mem0-client.js";
 import { type AgentConfig, resolveToolNames } from "./agent-config.js";
+import { getPrompt } from "./prompt-service.js";
 
 // OpenAI configuration
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -662,33 +663,18 @@ function substituteTemplateVars(template: string, tenant: TenantContext): string
     .replace(/\{\{surface\}\}/g, tenant.surface);
 }
 
-/**
- * Build system prompt with tenant context.
- * If agentConfig is provided, uses its template + filtered tool docs.
- * Otherwise, uses the default Omnis prompt with all tools.
- */
-function buildSystemPrompt(tenant: TenantContext, agentConfig?: AgentConfig): string {
-  if (agentConfig) {
-    // Custom agent: use template with variable substitution + filtered tool docs
-    const enabledToolNames = resolveToolNames(agentConfig.skills);
-    const customPrompt = substituteTemplateVars(agentConfig.systemPromptTemplate, tenant);
-    const toolDocs = buildToolDocumentation(tenant, enabledToolNames);
-    return customPrompt + "\n" + toolDocs;
-  }
-
-  // Default Omnis prompt
-  return (
-    `You are Omnis, an intelligent Revenue Intelligence Agent for Eazybe.
+/** Hardcoded fallback for Omnis prompt (used when MongoDB is unavailable). */
+const DEFAULT_OMNIS_PROMPT = `You are Omnis, an intelligent Revenue Intelligence Agent for Eazybe.
 
 You help sales leaders, managers, and reps understand their pipeline, team performance, and customer interactions by combining CRM data, analytics, knowledge base, and conversation history.
 
 ## Current User Context
-- Organization ID: ${tenant.organizationId}
-- Workspace ID: ${tenant.workspaceId}
-- Team ID: ${tenant.teamId}
-- User ID: ${tenant.userId}
-- Role: ${tenant.role}
-- Surface: ${tenant.surface}
+- Organization ID: {{org_id}}
+- Workspace ID: {{workspace_id}}
+- Team ID: {{team_id}}
+- User ID: {{user_id}}
+- Role: {{role}}
+- Surface: {{surface}}
 
 ## How to Think (Planning)
 
@@ -726,9 +712,46 @@ For every query, follow this process:
 - **Bold** key insights and metrics
 - Add a brief **takeaway** or **recommendation** at the end of analytical answers
 - When presenting time metrics, convert seconds to human-readable format (e.g., "2m 34s" not "154 seconds")
-- Keep responses concise but complete — don't omit important data points
-` + buildToolDocumentation(tenant)
-  );
+- Keep responses concise but complete — don't omit important data points`;
+
+/**
+ * MongoDB prompt_name → agent config ID mapping.
+ */
+const AGENT_PROMPT_NAMES: Record<string, string> = {
+  "sales-agent": "open_claw_SALES_AGENT",
+  "support-agent": "open_claw_SUPPORT_AGENT",
+  "analytics-agent": "open_claw_ANALYTICS_AGENT",
+};
+
+/**
+ * Build system prompt with tenant context.
+ * Loads from MongoDB first, falls back to hardcoded/markdown defaults.
+ */
+async function buildSystemPrompt(
+  tenant: TenantContext,
+  agentConfig?: AgentConfig,
+): Promise<string> {
+  if (agentConfig) {
+    // Custom agent: try MongoDB first, fallback to markdown template
+    const mongoPromptName = AGENT_PROMPT_NAMES[agentConfig.id];
+    let template = agentConfig.systemPromptTemplate; // markdown fallback
+    if (mongoPromptName) {
+      const dbPrompt = await getPrompt(mongoPromptName);
+      if (dbPrompt) {
+        template = dbPrompt;
+      }
+    }
+    const enabledToolNames = resolveToolNames(agentConfig.skills);
+    const customPrompt = substituteTemplateVars(template, tenant);
+    const toolDocs = buildToolDocumentation(tenant, enabledToolNames);
+    return customPrompt + "\n" + toolDocs;
+  }
+
+  // Omnis agent: try MongoDB first, fallback to hardcoded default
+  const dbPrompt = await getPrompt("open_claw_OMNIS_AGENT");
+  const promptTemplate = dbPrompt || DEFAULT_OMNIS_PROMPT;
+  const resolvedPrompt = substituteTemplateVars(promptTemplate, tenant);
+  return resolvedPrompt + buildToolDocumentation(tenant);
 }
 
 /**
@@ -791,8 +814,8 @@ export async function processMessage(
     }
 
     // STEP 3: Build messages for GPT
-    console.log(`[omnis] Step 3: Building context...`);
-    const systemPrompt = buildSystemPrompt(tenant, agentConfig);
+    console.log(`[omnis] Step 3: Building context (loading prompt from MongoDB)...`);
+    const systemPrompt = await buildSystemPrompt(tenant, agentConfig);
 
     let enrichedSystemPrompt = systemPrompt;
     if (memoryContext) {
