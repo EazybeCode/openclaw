@@ -810,7 +810,7 @@ export async function processMessage(
     if (hasMemorySkill) {
       console.log(`[omnis] Step 1: Searching memories...`);
       try {
-        memoryContext = await buildMemoryContext(userMessage, tenant, 5);
+        memoryContext = await buildMemoryContext(userMessage, tenant, 5, agentConfig?.id);
         if (memoryContext) {
           memoriesUsed = (memoryContext.match(/- \[/g) || []).length;
           console.log(`[omnis] Found ${memoriesUsed} memories`);
@@ -886,7 +886,7 @@ export async function processMessage(
     if (hasMemorySkill) {
       console.log(`[omnis] Step 5: Storing memory...`);
       try {
-        await storeMemory(userMessage, tenant, "user");
+        await storeMemory(userMessage, tenant, "user", agentConfig?.id);
       } catch (err) {
         console.warn(`[omnis] Failed to store memory:`, err);
       }

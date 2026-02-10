@@ -357,7 +357,7 @@ export async function handleOpenAiHttpRequest(
 
     // Retrieve relevant memories from Mem0
     try {
-      const memoryContext = await buildMemoryContext(prompt.message, tenant, 5);
+      const memoryContext = await buildMemoryContext(prompt.message, tenant, 5, agentConfig?.id);
       if (memoryContext) {
         extraSystemPrompt = extraSystemPrompt + "\n\n" + memoryContext;
         console.log(`[openai-http] Mem0: Retrieved memories for ${tenantToString(tenant)}`);
@@ -581,7 +581,7 @@ export async function handleOpenAiHttpRequest(
 
       // Store conversation to Mem0 - it automatically extracts relevant memories
       if (hasTenant && tenantValidation.ok) {
-        storeMemory(prompt.message, tenant, "user")
+        storeMemory(prompt.message, tenant, "user", agentConfig?.id)
           .then((stored) => {
             if (stored) {
               console.log(`[openai-http] Mem0: Stored memory for ${tenantToString(tenant)}`);

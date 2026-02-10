@@ -35,12 +35,14 @@ export interface Mem0AddOptions {
   tenant: TenantContext;
   scopeLevel?: ScopeLevel;
   metadata?: Record<string, unknown>;
+  agentId?: string;
 }
 
 export interface Mem0SearchOptions {
   tenant: TenantContext;
   scopeLevels?: ScopeLevel[];
   limit?: number;
+  agentId?: string;
 }
 
 function getEnvConfig(): Mem0Config | null {
@@ -104,9 +106,9 @@ export class Mem0Client {
   }
 
   async addMemory(content: string, options: Mem0AddOptions): Promise<Mem0Memory[]> {
-    const { tenant, scopeLevel = "user", metadata = {} } = options;
+    const { tenant, scopeLevel = "user", metadata = {}, agentId: customAgentId } = options;
     const scopeKey = createScopeKey(tenant, scopeLevel);
-    const agentId = this.orgId || "openclaw";
+    const agentId = customAgentId || this.orgId || "openclaw";
 
     console.log(`[mem0] ========== ADD MEMORY ==========`);
     console.log(`[mem0] Content: "${content.substring(0, 100)}..."`);
@@ -152,20 +154,21 @@ export class Mem0Client {
   }
 
   async searchMemories(query: string, options: Mem0SearchOptions): Promise<Mem0SearchResult[]> {
-    const { tenant, scopeLevels, limit = 10 } = options;
+    const { tenant, scopeLevels, limit = 10, agentId: customAgentId } = options;
     const scopesToSearch = scopeLevels || this.getDefaultScopeLevels(tenant);
     const allResults: Mem0SearchResult[] = [];
+    const agentId = customAgentId || this.orgId || "openclaw";
 
     console.log(`[mem0] ========== SEARCH MEMORIES ==========`);
     console.log(`[mem0] Query: "${query.substring(0, 50)}..."`);
+    console.log(`[mem0] Agent ID: ${agentId}`);
     console.log(`[mem0] Scopes to search: ${scopesToSearch.join(", ")}`);
 
     for (const scopeLevel of scopesToSearch) {
       try {
         const scopeKey = createScopeKey(tenant, scopeLevel);
-        const agentId = this.orgId || "openclaw";
 
-        // V2 API requires filters object - user_id and agent_id go inside filters
+        // V2 API - filter by user_id and agent_id for per-agent memory isolation
         const payload = {
           query,
           top_k: Math.ceil(limit / scopesToSearch.length),
@@ -175,7 +178,7 @@ export class Mem0Client {
           },
         };
 
-        console.log(`[mem0] Search scope ${scopeLevel}: user_id=${scopeKey}`);
+        console.log(`[mem0] Search scope ${scopeLevel}: user_id=${scopeKey}, agent_id=${agentId}`);
 
         // Use V2 API for search - Mem0 may return array directly OR { results: [...] }
         const rawResult = await this.request<Mem0SearchResult[] | { results: Mem0SearchResult[] }>(
@@ -231,7 +234,6 @@ export class Mem0Client {
         top_k: limit * 3,
         filters: {
           user_id: scopeKey,
-          agent_id: agentId,
         },
       };
 
@@ -272,7 +274,6 @@ export class Mem0Client {
       const payload = {
         query,
         user_id: scopeKey,
-        agent_id: agentId,
         limit: limit * 3,
       };
 
@@ -315,7 +316,7 @@ export class Mem0Client {
     console.log(`[mem0] Scope Key: ${scopeKey}`);
     console.log(`[mem0] Agent ID: ${agentId}`);
 
-    // Strategy 1: V2 API with user_id and agent_id in filters
+    // Strategy 1: V2 API with user_id filter
     try {
       console.log(`[mem0] Strategy 1: V2 API with filters object`);
 
@@ -324,7 +325,6 @@ export class Mem0Client {
         top_k: limit * 3,
         filters: {
           user_id: scopeKey,
-          agent_id: agentId,
         },
       };
 
@@ -362,7 +362,7 @@ export class Mem0Client {
       console.warn(`[mem0] Strategy 1 failed:`, err);
     }
 
-    // Strategy 2: V2 API with AND filter for user_id and agent_id
+    // Strategy 2: V2 API with user_id filter (alternative format)
     try {
       console.log(`[mem0] Strategy 2: V2 API with AND filter`);
 
@@ -370,7 +370,7 @@ export class Mem0Client {
         query,
         top_k: limit * 3,
         filters: {
-          AND: [{ user_id: scopeKey }, { agent_id: agentId }],
+          user_id: scopeKey,
         },
       };
 
@@ -402,15 +402,15 @@ export class Mem0Client {
       console.warn(`[mem0] Strategy 2 failed:`, err);
     }
 
-    // Strategy 3: V2 API with agent_id only, client-side user filtering
+    // Strategy 3: V2 API with org scope, client-side user filtering
     try {
-      console.log(`[mem0] Strategy 3: V2 API with agent_id filter, client-side filtering`);
+      console.log(`[mem0] Strategy 3: V2 API with org scope, client-side filtering`);
 
       const payload = {
         query,
         top_k: 50,
         filters: {
-          agent_id: agentId,
+          user_id: scopeKey,
         },
       };
 
@@ -461,7 +461,6 @@ export class Mem0Client {
       const payload = {
         query,
         user_id: scopeKey,
-        agent_id: agentId,
         limit: limit * 3,
       };
 
@@ -572,6 +571,7 @@ export async function buildMemoryContext(
   query: string,
   tenant: TenantContext,
   limit: number = 5,
+  agentId?: string,
 ): Promise<string> {
   const client = getMem0Client();
   if (!client) {
@@ -579,7 +579,7 @@ export async function buildMemoryContext(
   }
 
   try {
-    const memories = await client.searchMemories(query, { tenant, limit });
+    const memories = await client.searchMemories(query, { tenant, limit, agentId });
 
     if (memories.length === 0) {
       return "";
@@ -606,6 +606,7 @@ export async function storeMemory(
   content: string,
   tenant: TenantContext,
   scopeLevel: ScopeLevel = "user",
+  agentId?: string,
 ): Promise<boolean> {
   const client = getMem0Client();
   if (!client) {
@@ -613,7 +614,7 @@ export async function storeMemory(
   }
 
   try {
-    await client.addMemory(content, { tenant, scopeLevel });
+    await client.addMemory(content, { tenant, scopeLevel, agentId });
     return true;
   } catch (err) {
     console.error("[mem0] Failed to store memory:", err);
