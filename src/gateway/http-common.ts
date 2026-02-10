@@ -1,6 +1,16 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readJsonBody } from "./hooks.js";
 
+export function setCorsHeaders(res: ServerResponse) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-Org-Id, X-Workspace-Id, X-OpenClaw-Agent-Id, X-OpenClaw-Agent, X-OpenClaw-Session-Key, X-OpenClaw-Token",
+  );
+  res.setHeader("Access-Control-Max-Age", "86400");
+}
+
 export function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
