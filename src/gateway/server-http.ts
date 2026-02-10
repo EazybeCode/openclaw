@@ -34,6 +34,7 @@ import {
   resolveHookDeliver,
 } from "./hooks.js";
 import { setCorsHeaders } from "./http-common.js";
+import { handleMemoryHttpRequest } from "./memory-http.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
 import { handleOpenResponsesHttpRequest } from "./openresponses-http.js";
 import { handleToolsInvokeHttpRequest } from "./tools-invoke-http.js";
@@ -293,6 +294,9 @@ export function createGatewayHttpServer(opts: {
         return;
       }
       if (await handleCustomToolsHttpRequest(req, res)) {
+        return;
+      }
+      if (await handleMemoryHttpRequest(req, res)) {
         return;
       }
       if (openAiChatCompletionsEnabled) {
