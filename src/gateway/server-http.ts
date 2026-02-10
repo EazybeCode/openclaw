@@ -18,6 +18,8 @@ import {
   handleControlUiHttpRequest,
   type ControlUiRootState,
 } from "./control-ui.js";
+import { handleCustomAgentsHttpRequest } from "./custom-agents-http.js";
+import { handleCustomToolsHttpRequest } from "./custom-tools-http.js";
 import { applyHookMappings } from "./hooks-mapping.js";
 import {
   extractHookToken,
@@ -275,6 +277,12 @@ export function createGatewayHttpServer(opts: {
         ) {
           return;
         }
+      }
+      if (await handleCustomAgentsHttpRequest(req, res)) {
+        return;
+      }
+      if (await handleCustomToolsHttpRequest(req, res)) {
+        return;
       }
       if (openAiChatCompletionsEnabled) {
         if (

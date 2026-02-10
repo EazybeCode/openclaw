@@ -18,6 +18,12 @@ import {
   type LearningScopeLevel,
 } from "../memory/mem0-client.js";
 import { type AgentConfig, resolveToolNames } from "./agent-config.js";
+import {
+  getCustomToolsByIds,
+  executeCustomTool,
+  toGptToolDefinition,
+  type CustomToolDoc,
+} from "./custom-tool-service.js";
 import { getPrompt } from "./prompt-service.js";
 
 // OpenAI configuration
@@ -227,11 +233,19 @@ const TOOLS = [
 /**
  * Filter TOOLS array to only include tools enabled by the agent's skills.
  * Returns all tools if no agentConfig is provided.
+ * When customToolDefs are provided, they are appended to the built-in tools.
  */
-function filterToolsBySkills(agentConfig?: AgentConfig): typeof TOOLS {
-  if (!agentConfig) return TOOLS;
-  const enabledNames = resolveToolNames(agentConfig.skills);
-  return TOOLS.filter((t) => enabledNames.includes(t.function.name));
+function filterToolsBySkills(
+  agentConfig?: AgentConfig,
+  customToolDefs?: ReturnType<typeof toGptToolDefinition>[],
+): typeof TOOLS {
+  const builtIn = agentConfig
+    ? TOOLS.filter((t) => resolveToolNames(agentConfig.skills).includes(t.function.name))
+    : TOOLS;
+  if (customToolDefs && customToolDefs.length > 0) {
+    return [...builtIn, ...customToolDefs] as typeof TOOLS;
+  }
+  return builtIn;
 }
 
 export interface OmnisMessage {
@@ -317,12 +331,14 @@ async function callHubSpotTool(
 }
 
 /**
- * Execute a tool based on GPT function call
+ * Execute a tool based on GPT function call.
+ * customToolsMap is a lookup of tool_id → CustomToolDoc for custom tools.
  */
 async function executeTool(
   name: string,
   args: Record<string, unknown>,
   tenant: TenantContext,
+  customToolsMap?: Map<string, CustomToolDoc>,
 ): Promise<string> {
   console.log(`[omnis] Executing tool: ${name}`);
   console.log(`[omnis] Tool args: ${JSON.stringify(args)}`);
@@ -414,8 +430,15 @@ async function executeTool(
         return result;
       }
 
-      default:
+      default: {
+        // Check custom tools
+        if (customToolsMap?.has(name)) {
+          const customTool = customToolsMap.get(name)!;
+          console.log(`[omnis] Executing custom tool: ${name} (${customTool.execution_type})`);
+          return executeCustomTool(customTool, args);
+        }
         return `Unknown tool: ${name}`;
+      }
     }
   } catch (err) {
     console.error(`[omnis] Tool ${name} failed:`, err);
@@ -431,6 +454,7 @@ async function callGPT(
   tenant: TenantContext,
   maxIterations: number = 5,
   filteredTools?: typeof TOOLS,
+  customToolsMap?: Map<string, CustomToolDoc>,
 ): Promise<{ response: string; toolsUsed: string[] }> {
   if (!OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY not configured");
@@ -496,7 +520,7 @@ async function callGPT(
       console.log(`[omnis] Tool call: ${toolName}`);
       toolsUsed.push(toolName);
 
-      const toolResult = await executeTool(toolName, toolArgs, tenant);
+      const toolResult = await executeTool(toolName, toolArgs, tenant, customToolsMap);
 
       // Add tool result to messages
       currentMessages.push({
@@ -831,15 +855,28 @@ export async function processMessage(
       { role: "user", content: userMessage },
     ];
 
-    // STEP 4: Call GPT with tools (filtered by agent skills)
+    // STEP 4: Call GPT with tools (filtered by agent skills + custom tools)
     console.log(`[omnis] Step 4: Calling GPT...`);
-    const filteredTools = filterToolsBySkills(agentConfig);
+
+    // Load custom tools if the agent has them
+    let customToolDefs: ReturnType<typeof toGptToolDefinition>[] = [];
+    let customToolsMap: Map<string, CustomToolDoc> | undefined;
+    const customToolIds = (agentConfig as { customTools?: string[] } | undefined)?.customTools;
+    if (customToolIds && customToolIds.length > 0) {
+      console.log(`[omnis] Loading ${customToolIds.length} custom tools...`);
+      const customTools = await getCustomToolsByIds(customToolIds, tenant.organizationId);
+      customToolDefs = customTools.map(toGptToolDefinition);
+      customToolsMap = new Map(customTools.map((t) => [t.tool_id, t]));
+      console.log(`[omnis] Custom tools loaded: [${customTools.map((t) => t.tool_id).join(", ")}]`);
+    }
+
+    const filteredTools = filterToolsBySkills(agentConfig, customToolDefs);
     if (agentConfig) {
       console.log(
         `[omnis] Enabled tools: [${filteredTools.map((t) => t.function.name).join(", ")}]`,
       );
     }
-    const gptResult = await callGPT(messages, tenant, 5, filteredTools);
+    const gptResult = await callGPT(messages, tenant, 5, filteredTools, customToolsMap);
     toolsUsed.push(...gptResult.toolsUsed);
 
     console.log(`[omnis] GPT response received (${gptResult.response.length} chars)`);

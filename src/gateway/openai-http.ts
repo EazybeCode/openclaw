@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { getAgentConfig, initAgentRegistry } from "../agent/agent-config-registry.js";
+import { getCustomAgent, toAgentConfig } from "../agent/custom-agent-service.js";
 import {
   processMessage as omnisProcessMessage,
   handleCorrection as omnisHandleCorrection,
@@ -316,10 +317,27 @@ export async function handleOpenAiHttpRequest(
   const prompt = buildAgentPrompt(payload.messages);
 
   // Resolve agent type from header or body
+  // Checks built-in agents first, then custom agents from MongoDB
   const agentTypeRaw =
     (typeof req.headers["x-agent-type"] === "string" ? req.headers["x-agent-type"] : undefined) ||
     (typeof payload.agentType === "string" ? payload.agentType : undefined);
-  const agentConfig = agentTypeRaw ? getAgentConfig(agentTypeRaw) : undefined;
+
+  let agentConfig = agentTypeRaw ? getAgentConfig(agentTypeRaw) : undefined;
+
+  // If not found in built-in registry, check custom agents in MongoDB
+  if (agentTypeRaw && !agentConfig && hasTenant) {
+    try {
+      const customAgent = await getCustomAgent(agentTypeRaw, tenant.organizationId);
+      if (customAgent) {
+        agentConfig = toAgentConfig(customAgent) as typeof agentConfig;
+        console.log(
+          `[openai-http] Custom agent from DB: ${customAgent.agent_id} (${customAgent.agent_name})`,
+        );
+      }
+    } catch (err) {
+      console.warn(`[openai-http] Failed to load custom agent "${agentTypeRaw}" from DB:`, err);
+    }
+  }
 
   if (agentTypeRaw) {
     if (agentConfig) {
