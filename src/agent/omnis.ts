@@ -17,6 +17,8 @@ import {
   getLearnings,
   type LearningScopeLevel,
 } from "../memory/mem0-client.js";
+import { evaluateTriggers } from "../proactive/engine.js";
+import { ensureDefaultTriggers } from "../proactive/init.js";
 import { type AgentConfig, resolveToolNames } from "./agent-config.js";
 
 // OpenAI configuration
@@ -857,9 +859,28 @@ export async function processMessage(
             }
             break;
           case "proactive_reminders":
-            console.log(
-              `[omnis-behavior] proactive_reminders: checked for agent=${agentConfig.id}`,
-            );
+            try {
+              await ensureDefaultTriggers(tenant);
+              const evalResults = await evaluateTriggers(tenant, {
+                userMessage,
+                toolsUsed,
+                responseText: gptResult.response,
+                nowMs: Date.now(),
+              });
+              const firedMessages = evalResults
+                .filter((r) => r.fired && r.message)
+                .map((r) => r.message);
+              if (firedMessages.length > 0) {
+                gptResult.response +=
+                  "\n\n---\n**Proactive Insight:**\n" +
+                  firedMessages.map((m) => `- ${m}`).join("\n");
+              }
+              console.log(
+                `[omnis-behavior] proactive_reminders: evaluated for agent=${agentConfig.id}, fired=${evalResults.filter((r) => r.fired).length}/${evalResults.length}`,
+              );
+            } catch (err) {
+              console.error("[omnis-behavior] proactive_reminders error:", err);
+            }
             break;
         }
       }
