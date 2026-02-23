@@ -1,8 +1,4 @@
 {
-  "meta": {
-    "lastTouchedVersion": "2026.2.19-2",
-    "lastTouchedAt": "2026-02-20T06:26:21.246Z"
-  },
   "logging": {
     "level": "info"
   },
@@ -71,14 +67,13 @@
         "workspace": "/app/.openclaw/workspace-astrologer",
         "heartbeat": {
           "every": "4h",
-          "target": "telegram",
+          "target": "whatsapp",
           "activeHours": {
             "start": "08:00",
             "end": "22:00"
           }
         },
         "skills": [
-          "mcporter",
           "weather",
           "mem0",
           "qdrant"
@@ -89,7 +84,11 @@
           "emoji": "💬"
         },
         "tools": {
-          "profile": "messaging"
+          "profile": "messaging",
+          "alsoAllow": [
+            "exec",
+            "read"
+          ]
         }
       }
     ]
@@ -104,21 +103,13 @@
     {
       "agentId": "astrologer",
       "match": {
-        "channel": "whatsapp",
-        "peer": {
-          "kind": "direct",
-          "id": "+918394833858"
-        }
+        "channel": "whatsapp"
       }
     },
     {
       "agentId": "astrologer",
       "match": {
-        "channel": "telegram",
-        "peer": {
-          "kind": "direct",
-          "id": "*"
-        }
+        "channel": "telegram"
       }
     }
   ],
@@ -136,13 +127,14 @@
       "sendReadReceipts": true,
       "dmPolicy": "open",
       "selfChatMode": true,
+      "chunkMode": "newline",
       "allowFrom": [
         "*"
       ],
       "groupPolicy": "allowlist",
       "debounceMs": 0,
       "heartbeat": {
-        "showOk": true,
+        "showOk": false,
         "showAlerts": true,
         "useIndicator": true
       },
@@ -175,10 +167,11 @@
   "gateway": {
     "port": 8000,
     "mode": "local",
-    "bind": "lan",
+    "bind": "loopback",
     "controlUi": {
       "enabled": true,
-      "allowInsecureAuth": true
+      "allowInsecureAuth": true,
+      "dangerouslyDisableDeviceAuth": true
     },
     "auth": {
       "mode": "token",

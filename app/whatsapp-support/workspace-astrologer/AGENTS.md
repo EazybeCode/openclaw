@@ -11,6 +11,7 @@ Before doing anything else:
 3. Read `USER.md` — how to handle different users
 4. Read `TOOLS.md` — how to use Qdrant (knowledge) and Mem0 (memory)
 5. Read `MEMORY.md` — what to remember and what to skip
+6. Read `GUARDRAILS.md` — safety rules you MUST follow
 
 Don't ask permission. Just do it.
 
